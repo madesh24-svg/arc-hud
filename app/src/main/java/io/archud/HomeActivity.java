@@ -21,7 +21,7 @@ import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
 import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
+import android.widget.ScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -71,8 +71,8 @@ public class HomeActivity extends Activity {
     private float px;
     private HudView hud;
     private SetupCard card;
-    private LinearLayout inputsRow;
-    private LinearLayout appsRow;
+    private FlowLayout inputsRow;
+    private FlowLayout appsRow;
     private List<Item> hiddenInputs = new ArrayList<>();
     private List<Item> hiddenApps = new ArrayList<>();
     private final Map<String, Item> editableItems = new HashMap<>();
@@ -86,16 +86,24 @@ public class HomeActivity extends Activity {
         hud = new HudView(this, true);
         root.addView(hud);
 
+        // Tiles wrap onto as many lines as fit; the area only scrolls when there are more than fit.
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(d(40), d(236), d(40), d(10));
+        content.setPadding(d(40), d(166), d(40), d(30));
+        content.setClipChildren(false);
+        content.setClipToPadding(false);
         content.addView(heading("INPUTS"));
         inputsRow = row();
-        content.addView(scroller(inputsRow));
+        content.addView(inputsRow);
         content.addView(heading("APPS"));
         appsRow = row();
-        content.addView(scroller(appsRow));
-        root.addView(content, new FrameLayout.LayoutParams(
+        content.addView(appsRow);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setVerticalScrollBarEnabled(false);
+        scroll.setClipChildren(false);
+        scroll.setClipToPadding(false);
+        scroll.addView(content);
+        root.addView(scroll, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
 
         card = new SetupCard(this);
@@ -196,7 +204,7 @@ public class HomeActivity extends Activity {
     }
 
     private View findTile(Object tag) {
-        for (LinearLayout r : new LinearLayout[] {inputsRow, appsRow}) {
+        for (FlowLayout r : new FlowLayout[] {inputsRow, appsRow}) {
             for (int i = 0; i < r.getChildCount(); i++) {
                 if (tag.equals(r.getChildAt(i).getTag())) {
                     return r.getChildAt(i);
@@ -227,15 +235,25 @@ public class HomeActivity extends Activity {
         if (tim == null) {
             return out;
         }
+        List<TvInputInfo> list = new ArrayList<>();
         for (TvInputInfo info : tim.getTvInputList()) {
-            if (!info.isPassthroughInput() || info.isHidden(this)) {
-                continue;
+            if (info.isPassthroughInput() && !info.isHidden(this)) {
+                list.add(info);
             }
+        }
+        // Sorted by id so duplicate names ("AV", "AV") are numbered the same way as in ARC SETTINGS.
+        Collections.sort(list, (a, b) -> a.getId().compareTo(b.getId()));
+        String[] names = new String[list.size()];
+        for (int i = 0; i < list.size(); i++) {
+            CharSequence l = list.get(i).loadLabel(this);
+            names[i] = TextUtils.isEmpty(l) ? list.get(i).getId() : l.toString();
+        }
+        names = TileNames.numberDuplicates(names);
+        for (int i = 0; i < list.size(); i++) {
+            TvInputInfo info = list.get(i);
             boolean connected = tim.getInputState(info.getId()) == TvInputManager.INPUT_STATE_CONNECTED;
-            CharSequence l = info.loadLabel(this);
-            String name = TextUtils.isEmpty(l) ? info.getId() : l.toString();
             Intent watch = new Intent(Intent.ACTION_VIEW, TvContract.buildChannelUriForPassthroughInput(info.getId()));
-            out.add(new Item("input:" + info.getId(), name, connected ? "CONNECTED" : "NO SIGNAL",
+            out.add(new Item("input:" + info.getId(), names[i], connected ? "CONNECTED" : "NO SIGNAL",
                     connected ? CYAN : MUTED, null, watch));
         }
         return out;
@@ -432,22 +450,10 @@ public class HomeActivity extends Activity {
         return t;
     }
 
-    private LinearLayout row() {
-        LinearLayout r = new LinearLayout(this);
-        r.setOrientation(LinearLayout.HORIZONTAL);
+    private FlowLayout row() {
+        FlowLayout r = new FlowLayout(this);
         r.setPadding(d(8), 0, d(8), 0);
-        r.setClipChildren(false);
-        r.setClipToPadding(false);
         return r;
-    }
-
-    private HorizontalScrollView scroller(LinearLayout row) {
-        HorizontalScrollView h = new HorizontalScrollView(this);
-        h.setHorizontalScrollBarEnabled(false);
-        h.setClipChildren(false);
-        h.setClipToPadding(false);
-        h.addView(row);
-        return h;
     }
 
     private TextView text(String s, float size, int color, boolean bold) {

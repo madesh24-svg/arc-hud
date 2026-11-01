@@ -1,7 +1,15 @@
 # ARC HUD
 
 A lightweight, animated heads-up display for Android TV boxes. Runs fully on the device:
-no internet permission, no background service, no telemetry.
+no background service, no telemetry. The only network use is the optional self-update: it runs
+only when the user presses "Check for update", over HTTPS, and the code refuses any address other
+than this repository's releases (and GitHub's file servers they redirect to). Android installs an
+update only if it is signed with the same key.
+
+Updating needs the app to be allowed to install packages. Where the TV has no setting for that,
+the device owner grants it once:
+
+    adb shell appops set io.archud REQUEST_INSTALL_PACKAGES allow
 
 Shows live: IP, Wi-Fi MAC, SSID, signal, link speed, Private DNS, RAM, storage, network
 throughput, uptime, clock. Works as a launcher app and as a screensaver (Daydream).

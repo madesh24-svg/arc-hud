@@ -11,6 +11,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -20,9 +21,14 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
 /** ARC SETTINGS: everything the user can change, stored on the device only. */
 public class SettingsActivity extends Activity {
-    private static final String UPDATE_URL = "https://github.com/madesh24-svg/arc-hud/releases/latest/download/arc-hud.apk";
     private static final int CYAN = 0xFF50DCFF;
     private static final int GOLD = 0xFFFFB93C;
     private static final int WHITE = 0xFFEBFAFF;
@@ -37,6 +43,7 @@ public class SettingsActivity extends Activity {
     private SharedPreferences prefs;
     private ScreensaverSetup setup;
     private LinearLayout list;
+    private volatile boolean updating;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -80,11 +87,7 @@ public class SettingsActivity extends Activity {
             rebuild();
         });
         int hidden = Prefs.hidden(this).size();
-        row("Hidden tiles", hidden == 0 ? "NONE" : hidden + " HIDDEN", hidden == 0 ? null : () -> confirm(
-                "Show all hidden tiles again?", () -> {
-                    Prefs.setHidden(this, new java.util.HashSet<String>());
-                    rebuild();
-                }));
+        row("Hidden tiles", hidden == 0 ? "NONE" : hidden + " HIDDEN", hidden == 0 ? null : this::chooseUnhide);
         int pinned = Prefs.favs(this).size();
         row("Pinned to front", pinned == 0 ? "NONE" : pinned + " PINNED", pinned == 0 ? null : () -> confirm(
                 "Unpin all tiles?", () -> {
@@ -116,7 +119,7 @@ public class SettingsActivity extends Activity {
 
         section("ABOUT");
         row("Version", version(), null);
-        row("Download latest version", "OPENS BROWSER", this::update);
+        row("Check for update", "FROM " + Updater.REPO.toUpperCase(), this::update);
         row("Reset all settings", "", () -> confirm("Reset name, titles, hidden and pinned tiles, network values "
                 + "and animation to defaults?", this::reset));
 
@@ -233,11 +236,87 @@ public class SettingsActivity extends Activity {
         });
     }
 
+    /** Tick the hidden tiles to show again (one, several, or all). */
+    private void chooseUnhide() {
+        List<String> keys = new ArrayList<>(Prefs.hidden(this));
+        Collections.sort(keys);
+        String[] names = TileNames.labels(this, keys);
+        boolean[] show = new boolean[keys.size()];
+        new AlertDialog.Builder(this)
+                .setTitle("Tick the tiles to show again")
+                .setMultiChoiceItems(names, show, (d, which, checked) -> show[which] = checked)
+                .setPositiveButton("SHOW SELECTED", (d, w) -> {
+                    Set<String> hidden = Prefs.hidden(this);
+                    for (int i = 0; i < keys.size(); i++) {
+                        if (show[i]) {
+                            hidden.remove(keys.get(i));
+                        }
+                    }
+                    Prefs.setHidden(this, hidden);
+                    rebuild();
+                })
+                .setNeutralButton("SHOW ALL", (d, w) -> {
+                    Prefs.setHidden(this, new HashSet<String>());
+                    rebuild();
+                })
+                .setNegativeButton("CANCEL", null)
+                .show();
+    }
+
     private void update() {
+        if (updating) {
+            return;
+        }
+        updating = true;
+        Toast.makeText(this, "Checking " + Updater.REPO + " ...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                Updater.Release r = Updater.latest();
+                runOnUiThread(() -> offerUpdate(r));
+            } catch (Exception e) {
+                runOnUiThread(() -> message("Could not check for updates.\n" + e.getMessage()));
+            } finally {
+                updating = false;
+            }
+        }, "update-check").start();
+    }
+
+    private void offerUpdate(Updater.Release r) {
+        int current = versionCode();
+        if (r.versionCode <= current) {
+            message("You have the latest version (" + version() + ").");
+            return;
+        }
+        String size = r.size > 0 ? " (" + Math.max(1, r.size / 1024) + " KB)" : "";
+        confirm("Update to " + r.name + size + "?\nOnly from " + Updater.REPO + ", signed with the same key.", () -> {
+            if (!getPackageManager().canRequestPackageInstalls()) {
+                Intent allow = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + getPackageName()));
+                if (allow.resolveActivity(getPackageManager()) != null) {
+                    message("Allow ARC HUD to install updates on the next screen, then press Update again.");
+                    startActivity(allow);
+                } else {
+                    message("This TV has no setting to allow app updates, and ARC HUD has not been "
+                            + "allowed yet. Nothing was changed.");
+                }
+                return;
+            }
+            Toast.makeText(this, "Downloading " + r.name + " ...", Toast.LENGTH_SHORT).show();
+            new Thread(() -> {
+                try {
+                    Updater.install(getApplicationContext(), r);
+                } catch (Exception e) {
+                    runOnUiThread(() -> message("Update failed. Nothing was changed.\n" + e.getMessage()));
+                }
+            }, "update-install").start();
+        });
+    }
+
+    private int versionCode() {
         try {
-            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(UPDATE_URL)));
-        } catch (ActivityNotFoundException e) {
-            message("No browser on this TV can open the download.");
+            return getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
+        } catch (PackageManager.NameNotFoundException e) {
+            return Integer.MAX_VALUE;
         }
     }
 
