@@ -151,8 +151,7 @@ public class HudActivity extends Activity {
             return;
         }
         if (!setup.idleSafe()) {
-            done("ARC HUD is now the screensaver.
-This TV switches itself off instead of starting screensavers "
+            done("ARC HUD is now the screensaver.\nThis TV switches itself off instead of starting screensavers "
                     + "when idle, so the idle timer was left unchanged.");
         } else if (setup.canWriteSystem()) {
             chooseIdle();
@@ -171,8 +170,7 @@ This TV switches itself off instead of starting screensavers "
 
     private void idle(int minutes) {
         if (!setup.idleSafe()) {
-            info("IDLE TIME", "This TV switches itself off instead of starting screensavers when idle.
-"
+            info("IDLE TIME", "This TV switches itself off instead of starting screensavers when idle.\n"
                     + "The idle timer was left unchanged.");
             return;
         }
