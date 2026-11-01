@@ -1,0 +1,47 @@
+plugins {
+    id 'com.android.application'
+}
+
+def runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1") as int
+
+android {
+    namespace 'io.archud'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'io.archud'
+        minSdk 26
+        // 29 keeps the Wi-Fi MAC readable on Android 9-10 TV boxes; this app is sideloaded, not Play-distributed.
+        targetSdk 29
+        versionCode runNumber
+        versionName "1.0.${runNumber}"
+    }
+
+    signingConfigs {
+        shared {
+            // Key material comes from CI secrets (never committed); see .github/workflows/build.yml.
+            storeFile file(System.getenv("ARCHUD_KEYSTORE") ?: "missing.p12")
+            storeType 'pkcs12'
+            storePassword System.getenv("ARCHUD_KEYSTORE_PASSWORD")
+            keyAlias 'archud'
+            keyPassword System.getenv("ARCHUD_KEYSTORE_PASSWORD")
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.shared
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}

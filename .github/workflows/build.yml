@@ -1,0 +1,40 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Restore signing key
+        env:
+          KEY_B64: ${{ secrets.ARCHUD_KEYSTORE_B64 }}
+        run: echo "$KEY_B64" | base64 -d > "$RUNNER_TEMP/archud.p12"
+      - name: Build release APK
+        env:
+          ARCHUD_KEYSTORE: ${{ runner.temp }}/archud.p12
+          ARCHUD_KEYSTORE_PASSWORD: ${{ secrets.ARCHUD_KEYSTORE_PASSWORD }}
+        run: gradle assembleRelease --no-daemon --stacktrace
+      - name: Rename
+        run: cp app/build/outputs/apk/release/app-release.apk arc-hud.apk
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: ARC HUD 1.0.${{ github.run_number }}
+          files: arc-hud.apk
+          make_latest: true
