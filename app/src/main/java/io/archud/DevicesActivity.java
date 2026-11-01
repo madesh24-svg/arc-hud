@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.Locale;
 
 /** Devices on the local network, refreshed every minute while this screen is open. */
-public class DevicesActivity extends Activity implements NetScanner.Listener {
+public class DevicesActivity extends Activity implements NetScanner.Listener, PortScanner.Listener {
     private static final int CYAN = 0xFF50DCFF;
     private static final int GOLD = 0xFFFFB93C;
     private static final int WHITE = 0xFFEBFAFF;
@@ -33,6 +33,8 @@ public class DevicesActivity extends Activity implements NetScanner.Listener {
     private NetScanner scanner;
     private LinearLayout list;
     private TextView summary;
+    private TextView scanButton;
+    private PortScanner portScanner;
     private List<NetScanner.Device> shown = new ArrayList<>();
     private boolean dialogOpen;
     private final SimpleDateFormat clock = new SimpleDateFormat("HH:mm:ss", Locale.US);
@@ -50,6 +52,19 @@ public class DevicesActivity extends Activity implements NetScanner.Listener {
         page.addView(text("NETWORK DEVICES", 32, WHITE, true));
         summary = text("Scanning your home network ...", 15, DIM, false);
         page.addView(summary);
+        portScanner = PortScanner.get();
+        scanButton = text("", 15, WHITE, true);
+        scanButton.setFocusable(true);
+        scanButton.setClickable(true);
+        scanButton.setPadding(d(16), d(10), d(16), d(10));
+        scanButton.setBackground(rowBackground());
+        scanButton.setOnClickListener(v -> togglePortScan());
+        scanButton.setOnFocusChangeListener((v, f) -> scanButton.setTextColor(f ? INK : WHITE));
+        LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        bp.topMargin = d(10);
+        scanButton.setLayoutParams(bp);
+        page.addView(scanButton);
         list = new LinearLayout(this);
         list.setOrientation(LinearLayout.VERTICAL);
         list.setPadding(0, d(16), 0, 0);
@@ -65,12 +80,46 @@ public class DevicesActivity extends Activity implements NetScanner.Listener {
     protected void onResume() {
         super.onResume();
         scanner.subscribe(this);
+        portScanner.setListener(this);
+        refreshScanButton();
     }
 
     @Override
     protected void onPause() {
+        // A port scan runs only while this screen is open: leaving it stops it.
+        portScanner.stop();
+        portScanner.setListener(null);
         scanner.unsubscribe(this);
         super.onPause();
+    }
+
+    /** Start or stop the port scan on every device currently on this LAN. */
+    private void togglePortScan() {
+        if (portScanner.isRunning()) {
+            portScanner.stop();
+        } else {
+            List<String> ips = new ArrayList<>();
+            for (NetScanner.Device dev : scanner.snapshot()) {
+                ips.add(dev.ip);
+            }
+            portScanner.start(ips);
+        }
+        refreshScanButton();
+    }
+
+    private void refreshScanButton() {
+        String status = portScanner.status();
+        if (portScanner.isRunning()) {
+            scanButton.setText(status + "   ·   OK = STOP");
+        } else {
+            scanButton.setText("PORT SCAN  ·  OK = scan every device on this LAN" + (status.isEmpty() ? "" : "   ·   " + status));
+        }
+    }
+
+    @Override
+    public void onScanUpdate() {
+        refreshScanButton();
+        onDevices(scanner.snapshot());
     }
 
     @Override
@@ -175,11 +224,16 @@ public class DevicesActivity extends Activity implements NetScanner.Listener {
         TextView info = text(meta.toString(), 13, infoColor, false);
         r.addView(name);
         r.addView(info);
+        String ports = dev.ip.isEmpty() ? "" : portScanner.summaryFor(dev.ip);
+        final TextView scan = text(ports, 13, GOLD, false);
+        scan.setVisibility(ports.isEmpty() ? View.GONE : View.VISIBLE);
+        r.addView(scan);
         r.setClickable(true);
         r.setOnClickListener(v -> rename(dev));
         r.setOnFocusChangeListener((v, f) -> {
             name.setTextColor(f ? INK : nameColor);
             info.setTextColor(f ? INK : infoColor);
+            scan.setTextColor(f ? INK : GOLD);
         });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);

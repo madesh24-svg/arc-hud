@@ -2,6 +2,14 @@
 
 Release numbers follow the CI run (`build-N` = version 1.0.N).
 
+## Next release (port scan)
+- Devices: PORT SCAN button scans every device on the TV's current LAN (no exclusions). It runs only after you
+  press OK, shows progress, and stops on OK again or when you leave the screen.
+- Pacing adapts to the network: concurrency rises while probes answer quickly and falls on timeouts, slow
+  replies or low memory. Up to 24 parallel probes, 34 common TCP ports, short banner reads.
+- Each device lists its open ports and service names, with a CHECK or ACT note for risky services
+  (Telnet, FTP, SMB, RDP, VNC, MQTT, plain web pages). Local addresses only.
+
 ## 1.0.20
 - The Apps row no longer lists the device's own Settings app a second time: the fixed TV SETTINGS tile
   already opens the same screen.
