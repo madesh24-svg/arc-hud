@@ -23,6 +23,7 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <application
+        android:name=".ArcApp"
         android:allowBackup="false"
         android:banner="@drawable/banner"
         android:icon="@drawable/icon"
@@ -67,6 +68,15 @@
             android:label="ARC SETTINGS"
             android:screenOrientation="landscape"
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
+
+        <activity
+            android:name=".SearchActivity"
+            android:exported="false"
+            android:label="ARC SEARCH"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
+            android:windowSoftInputMode="stateHidden|adjustResize" />
 
         <activity
             android:name=".DevicesActivity"

@@ -109,6 +109,14 @@ public class SettingsActivity extends Activity {
         }
         row("Starts when idle", idleText(), null);
 
+        section("SEARCH");
+        boolean voice = prefs.getBoolean(Prefs.VOICE_TAKEOVER, true);
+        row("Voice search shown in ARC SEARCH", voice ? "ON" : "OFF", () -> {
+            prefs.edit().putBoolean(Prefs.VOICE_TAKEOVER, !voice).apply();
+            rebuild();
+        });
+        row("About", "SMARTTUBE + WEB, OPENS IN BROWSER", null);
+
         section("ANIMATION");
         String anim = prefs.getString(Prefs.ANIM, "normal");
         row("Ring animation", anim.toUpperCase(), () -> {
@@ -324,7 +332,7 @@ public class SettingsActivity extends Activity {
         prefs.edit()
                 .remove(Prefs.TITLE).remove(Prefs.SUBTITLE).remove(Prefs.SALUTATION)
                 .remove(Prefs.SSID).remove(Prefs.MAC).remove(Prefs.SHOW_STATUS).remove(Prefs.ANIM)
-                .remove(Prefs.HIDDEN).remove(Prefs.FAVS).remove(Prefs.NEVER_ASK)
+                .remove(Prefs.HIDDEN).remove(Prefs.FAVS).remove(Prefs.NEVER_ASK).remove(Prefs.VOICE_TAKEOVER)
                 .apply();
         Toast.makeText(this, "Settings reset", Toast.LENGTH_SHORT).show();
         build(0);

@@ -20,6 +20,8 @@ final class Prefs {
     static final String HIDDEN = "hidden";
     static final String FAVS = "fav";
     static final String NEVER_ASK = "ss_never";
+    /** ARC SEARCH takes over voice searches (default on). */
+    static final String VOICE_TAKEOVER = "voice_takeover";
 
     static final String DEFAULT_TITLE = "A.R.C.  H.U.D.";
     static final String DEFAULT_SUBTITLE = "ADAPTIVE RESPONSE CONSOLE";

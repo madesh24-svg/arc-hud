@@ -1,10 +1,14 @@
 # ARC HUD
 
 A lightweight, animated heads-up display for Android TV boxes. Runs fully on the device:
-no background service, no telemetry. The only network use is the optional self-update: it runs
-only when the user presses "Check for update", over HTTPS, and the code refuses any address other
-than this repository's releases (and GitHub's file servers they redirect to). Android installs an
-update only if it is signed with the same key.
+no background service, no telemetry. Network use is limited to two things, both over HTTPS to fixed
+hosts and only when the user triggers them:
+
+- the optional self-update ("Check for update"): only this repository's releases (and GitHub's file
+  servers they redirect to); Android installs an update only if it is signed with the same key;
+- ARC SEARCH: Wikipedia's search API (en / ta) and YouTube thumbnail images (`i.ytimg.com`), through a
+  host allowlist (`SafeHttp`) that follows no redirects. SmartTube results come from SmartTube's own
+  search provider on the device, and web searches are handed to the browser.
 
 Updating needs the app to be allowed to install packages. Where the TV has no setting for that,
 the device owner grants it once:
@@ -60,6 +64,16 @@ row brings hidden tiles back. Phase 1 opens like a normal app; it is not registe
 MENU on the remote (or the ARC SETTINGS tile) opens the app's own settings: greeting name, title,
 subtitle, status line, hidden/pinned tiles, Wi-Fi name / MAC display, screensaver, animation speed,
 update download and reset. Everything is stored on the device only.
+
+## ARC SEARCH
+
+A voice search from the phone remote, or the SEARCH tile, opens ARC SEARCH: one section per source.
+SmartTube shows its own top 10 results (MORE reveals 10 more), the web section shows Wikipedia
+articles and a DuckDuckGo row, and everything opens in SmartTube or the TV browser (TV Bro preferred).
+Voice text is read from the system setting the phone-remote server writes (`phoneremoteyoutubeSearchKey`);
+a switch in ARC SETTINGS turns that hook off. New sources are one class implementing `SearchProvider`
+plus one line in `SearchProviders`. On Android 10+ the voice hook cannot open ARC SEARCH from the
+background; the SEARCH tile always works.
 
 ## Network devices
 

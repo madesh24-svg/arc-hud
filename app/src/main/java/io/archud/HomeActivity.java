@@ -193,6 +193,8 @@ public class HomeActivity extends Activity {
         if (tvSettings.resolveActivity(getPackageManager()) != null) {
             inputsRow.addView(tile(new Item("fixed:tv-settings", "TV SETTINGS", "TV MENU", GOLD, null, tvSettings), 150, 84, false));
         }
+        inputsRow.addView(tile(new Item("fixed:search", "SEARCH", "TYPE OR SPEAK", CYAN, null,
+                new Intent(this, SearchActivity.class)), 150, 84, false));
         inputsRow.addView(tile(new Item("fixed:full-hud", "FULL HUD", "DISPLAY MODE", CYAN, null,
                 new Intent(this, HudActivity.class)), 150, 84, false));
         inputsRow.addView(tile(new Item("fixed:devices", "DEVICES", "ON NETWORK", CYAN, null,

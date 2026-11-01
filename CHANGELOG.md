@@ -2,6 +2,13 @@
 
 Release numbers follow the CI run (`build-N` = version 1.0.N).
 
+## 1.0.17
+- ARC SEARCH: a voice search (or the SEARCH tile) shows SmartTube's own top 10 results (MORE shows
+  10 more) and web results (Wikipedia articles plus a DuckDuckGo row) that open in the TV browser.
+  Sources are pluggable (SearchProvider); a switch in ARC SETTINGS turns the voice hook off.
+- Network rule: ARC SEARCH may fetch only Wikipedia's search API and YouTube thumbnail images,
+  over HTTPS, only when a search runs (SafeHttp allowlist).
+
 ## 1.0.16
 - Small version line in the bottom-right corner of the home screen and HUD.
 
