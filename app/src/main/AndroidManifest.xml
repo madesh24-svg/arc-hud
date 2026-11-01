@@ -6,6 +6,11 @@
     <!-- Android only reveals the Wi-Fi network name (SSID) to apps holding a location permission. -->
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
+    <!-- Screensaver setup, used only after the user picks YES. Both are granted by the device owner
+         (not by apps); without them the app opens the system picker or explains that it cannot. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+
     <uses-feature android:name="android.software.leanback" android:required="false" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 

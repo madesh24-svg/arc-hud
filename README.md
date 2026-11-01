@@ -38,4 +38,17 @@ MIT
     adb shell pm install -r /sdcard/Download/arc-hud.apk
     adb shell pm grant io.archud android.permission.ACCESS_COARSE_LOCATION
 
-Use it as a screensaver: Settings > Device Preferences > Screen saver > ARC HUD (where the firmware exposes it).
+## Screensaver setup
+
+On launch the app checks whether it is the screensaver and, if not, asks. Nothing changes unless
+the user picks YES. Press OK or MENU on the HUD any time to manage it (idle time, restore original).
+
+- Devices with a screensaver settings screen: YES opens it so the user confirms there.
+- Devices without one: the app can apply the change itself only if the device owner has granted it
+  the permission once:
+
+      adb shell pm grant io.archud android.permission.WRITE_SECURE_SETTINGS
+      adb shell appops set io.archud WRITE_SETTINGS allow
+
+  Otherwise it explains that the device does not allow it. RESTORE ORIGINAL puts back the previous
+  screensaver and idle time.
