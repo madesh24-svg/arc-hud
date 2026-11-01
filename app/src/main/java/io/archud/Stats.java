@@ -2,10 +2,12 @@ package io.archud;
 
 import android.app.ActivityManager;
 import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.net.ConnectivityManager;
 import android.net.LinkProperties;
 import android.net.Network;
+import android.net.NetworkInfo;
 import android.net.TrafficStats;
 import android.net.wifi.WifiInfo;
 import android.net.wifi.WifiManager;
@@ -25,6 +27,8 @@ final class Stats {
     private static final float FULL_SCALE_KBPS = 4096f;
 
     private final Context ctx;
+    private final String macOverride;
+    private final String ssidOverride;
 
     final String host;
     final String chipset;
@@ -66,7 +70,11 @@ final class Stats {
         ctx = context;
         host = (Build.MANUFACTURER + " " + Build.MODEL).toUpperCase(Locale.US);
         chipset = (Build.HARDWARE + " x" + Runtime.getRuntime().availableProcessors()).toUpperCase(Locale.US);
-        os = "ANDROID " + Build.VERSION.RELEASE + " / API " + Build.VERSION.SDK_INT;
+        os = "ANDROID " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")";
+        // Optional per-device values for fields the OS hides from apps (set once via HudActivity extras).
+        SharedPreferences prefs = context.getSharedPreferences(HudActivity.PREFS, Context.MODE_PRIVATE);
+        macOverride = prefs.getString("mac", "");
+        ssidOverride = prefs.getString("ssid", "");
         PackageManager pm = context.getPackageManager();
         remoteApp = installed(pm, "com.vs.phoneremote.google");
         castApp = installed(pm, "org.smarttube.stable") || installed(pm, "com.google.android.youtube.tv");
@@ -78,6 +86,9 @@ final class Stats {
         uptime = duration(now);
         readWifi();
         mac = readMac();
+        if ("RESTRICTED".equals(mac) && !macOverride.isEmpty()) {
+            mac = macOverride.toUpperCase(Locale.US);
+        }
         readNetwork();
         readMemory();
         readDisk();
@@ -99,7 +110,13 @@ final class Stats {
             ip = a == 0 ? "--" : String.format(Locale.US, "%d.%d.%d.%d",
                     a & 0xff, (a >> 8) & 0xff, (a >> 16) & 0xff, (a >>> 24) & 0xff);
             String s = wi.getSSID();
-            ssid = (s == null || s.contains("<unknown")) ? "HIDDEN" : s.replace("\"", "");
+            ssid = clean(s);
+            if (ssid == null) {
+                ssid = clean(legacySsid());
+            }
+            if (ssid == null) {
+                ssid = ssidOverride.isEmpty() ? "HIDDEN" : ssidOverride;
+            }
             signal = wifiUp ? WifiManager.calculateSignalLevel(wi.getRssi(), 101) : -1;
             linkMbps = wi.getLinkSpeed();
             int f = wi.getFrequency();
@@ -107,6 +124,25 @@ final class Stats {
         } catch (RuntimeException e) {
             wifiUp = false;
         }
+    }
+
+    @SuppressWarnings("deprecation")
+    private String legacySsid() {
+        try {
+            ConnectivityManager cm = (ConnectivityManager) ctx.getSystemService(Context.CONNECTIVITY_SERVICE);
+            NetworkInfo ni = cm == null ? null : cm.getActiveNetworkInfo();
+            return ni != null && ni.getType() == ConnectivityManager.TYPE_WIFI ? ni.getExtraInfo() : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static String clean(String s) {
+        if (s == null) {
+            return null;
+        }
+        String v = s.replace("\"", "").trim();
+        return v.isEmpty() || v.contains("<unknown") || "0x".equals(v) ? null : v;
     }
 
     private void readNetwork() {

@@ -289,7 +289,7 @@ public class HudView extends View {
         panel(c, lx, 110, pw, 214, "// SYSTEM DIAGNOSTICS");
         row(c, lx, 110, pw, 0, "HOST", fit(s.host, 17), CYAN);
         row(c, lx, 110, pw, 1, "CHIPSET", fit(s.chipset, 17), CYAN);
-        row(c, lx, 110, pw, 2, "OS", fit(s.os, 17), CYAN);
+        row(c, lx, 110, pw, 2, "OS", fit(s.os, 21), CYAN);
         row(c, lx, 110, pw, 3, "DISPLAY", getWidth() + "x" + getHeight() + " @"
                 + getResources().getDisplayMetrics().densityDpi + "dpi", CYAN);
         row(c, lx, 110, pw, 4, "UPTIME", s.uptime, CYAN);
@@ -302,10 +302,10 @@ public class HudView extends View {
         panel(c, lx, 344, pw, 214, "// NETWORK");
         row(c, lx, 344, pw, 0, "IP", s.ip, CYAN);
         row(c, lx, 344, pw, 1, "MAC", s.mac, CYAN);
-        row(c, lx, 344, pw, 2, "SSID", fit(s.ssid, 17), s.wifiUp ? CYAN : WARN);
+        row(c, lx, 344, pw, 2, "SSID", fit(s.ssid, 21), s.wifiUp ? CYAN : WARN);
         row(c, lx, 344, pw, 3, "SIGNAL", s.signal < 0 ? "--" : s.signal + " % " + s.band, signalColor(s.signal));
         row(c, lx, 344, pw, 4, "LINK", s.linkMbps < 0 ? "--" : s.linkMbps + " MBPS", CYAN);
-        row(c, lx, 344, pw, 5, "DNS", fit(s.dns, 17), "STANDARD".equals(s.dns) ? GOLD : OK);
+        row(c, lx, 344, pw, 5, "DNS", fit(s.dns, 22), "STANDARD".equals(s.dns) ? GOLD : OK);
 
         panel(c, rx, 110, pw, 236, "// LOAD");
         bar(c, rx, 110, pw, 0, "CPU", s.cpu, s.cpuText);

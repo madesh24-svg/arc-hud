@@ -12,7 +12,12 @@ Personalise the on-screen text once:
 
     am start -n io.archud/.HudActivity --es title "MY TITLE" --es subtitle "MY SUBTITLE" --es salutation "NAME"
 
-The Wi-Fi name needs the location permission on Android 9+:
+Android hides the Wi-Fi MAC (and sometimes the SSID) from apps. If the HUD shows RESTRICTED or
+HIDDEN, store the values once on the device (read them with adb, they are never committed):
+
+    am start -n io.archud/.HudActivity --es mac "$(cat /sys/class/net/wlan0/address)" --es ssid "MyNetwork"
+
+The Wi-Fi name also needs the location permission on Android 9+:
 
     pm grant io.archud android.permission.ACCESS_COARSE_LOCATION
 

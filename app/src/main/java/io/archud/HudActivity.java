@@ -8,11 +8,11 @@ import android.view.View;
 
 /**
  * Full-screen HUD. Display text can be personalised once with intent extras, e.g.
- * am start -n io.archud/.HudActivity --es title "..." --es subtitle "..." --es salutation "..."
+ * am start -n io.archud/.HudActivity --es title "..." --es subtitle "..." --es salutation "..." [--es mac "..." --es ssid "..."]
  */
 public class HudActivity extends Activity {
     static final String PREFS = "hud";
-    private static final String[] KEYS = {"title", "subtitle", "salutation"};
+    private static final String[] KEYS = {"title", "subtitle", "salutation", "mac", "ssid"};
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
