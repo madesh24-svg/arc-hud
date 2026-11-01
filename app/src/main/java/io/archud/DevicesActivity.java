@@ -91,7 +91,10 @@ public class DevicesActivity extends Activity implements NetScanner.Listener {
         if (dialogOpen) {
             return;
         }
-        shown = devices;
+        List<NetScanner.Device> offline = scanner.offlineKnown();
+        List<NetScanner.Device> all = new ArrayList<>(devices);
+        all.addAll(offline);
+        shown = all;
         View focused = getCurrentFocus();
         int focusIndex = focused != null ? list.indexOfChild(focused) : -1;
         long now = System.currentTimeMillis();
@@ -107,9 +110,15 @@ public class DevicesActivity extends Activity implements NetScanner.Listener {
             }
             list.addView(row(dev, now));
         }
+        for (NetScanner.Device dev : offline) {
+            list.addView(row(dev, now));
+        }
         StringBuilder s = new StringBuilder();
         s.append(devices.size()).append(" ONLINE (").append(active).append(" ACTIVE, ")
                 .append(devices.size() - active).append(" STANDBY)");
+        if (!offline.isEmpty()) {
+            s.append("  ·  ").append(offline.size()).append(" OFFLINE");
+        }
         if (fresh > 0) {
             s.append("  ·  ").append(fresh).append(" NEW");
         }
@@ -136,10 +145,12 @@ public class DevicesActivity extends Activity implements NetScanner.Listener {
         r.setFocusable(true);
         r.setBackground(rowBackground());
 
-        boolean active = dev.active(now);
+        boolean active = !dev.offline && dev.active(now);
         String title = dev.display() + (dev.self ? "" : (dev.gateway ? "  (ROUTER)" : ""));
-        TextView name = text(title + (dev.isNew ? "   ● NEW" : ""), 17, dev.isNew ? GOLD : WHITE, true);
-        StringBuilder meta = new StringBuilder(active ? "ACTIVE   " : "STANDBY  ").append(dev.ip);
+        final int nameColor = dev.offline ? DIM : (dev.isNew ? GOLD : WHITE);
+        TextView name = text(title + (dev.isNew ? "   ● NEW" : ""), 17, nameColor, true);
+        StringBuilder meta = new StringBuilder(dev.offline ? "OFFLINE  " : (active ? "ACTIVE   " : "STANDBY  "))
+                .append(dev.ip.isEmpty() ? "--" : dev.ip);
         if (!dev.mac.isEmpty()) {
             meta.append("   ").append(dev.mac);
         }
@@ -155,15 +166,19 @@ public class DevicesActivity extends Activity implements NetScanner.Listener {
         if (!dev.model.isEmpty() && !dev.model.equals(dev.display())) {
             meta.append("   ").append(dev.model);
         }
-        meta.append("   ONLINE ").append(Stats.duration(Math.max(0, now - dev.firstSeen)));
-        int infoColor = dev.self ? OK : (active ? CYAN : DIM);
+        if (dev.offline) {
+            meta.append("   LAST SEEN ").append(Stats.duration(Math.max(0, now - dev.lastSeen))).append(" AGO");
+        } else {
+            meta.append("   ONLINE ").append(Stats.duration(Math.max(0, now - dev.firstSeen)));
+        }
+        final int infoColor = dev.self ? OK : (active ? CYAN : DIM);
         TextView info = text(meta.toString(), 13, infoColor, false);
         r.addView(name);
         r.addView(info);
         r.setClickable(true);
         r.setOnClickListener(v -> rename(dev));
         r.setOnFocusChangeListener((v, f) -> {
-            name.setTextColor(f ? INK : (dev.isNew ? GOLD : WHITE));
+            name.setTextColor(f ? INK : nameColor);
             info.setTextColor(f ? INK : infoColor);
         });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,

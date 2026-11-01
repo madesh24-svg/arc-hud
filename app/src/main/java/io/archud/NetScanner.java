@@ -9,6 +9,7 @@ import android.os.Looper;
 import android.os.SystemClock;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.FileReader;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -16,6 +17,7 @@ import java.net.InetAddress;
 import java.net.SocketTimeoutException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -54,6 +56,8 @@ final class NetScanner {
         volatile boolean isNew;
         volatile boolean self;
         volatile boolean gateway;
+        /** Known from an earlier scan but not seen now (built from the on-device memory). */
+        volatile boolean offline;
 
         Device(String ip) {
             this.ip = ip;
@@ -225,11 +229,20 @@ final class NetScanner {
         pool.shutdown();
         pool.awaitTermination(30, TimeUnit.SECONDS);
 
-        // 2. ARP table: MAC addresses (and devices that ignore pings but talked recently)
+        // 2. nudge every address (this forces an ARP lookup even for devices that ignore pings), twice, so
+        //    a device that is slow to answer (Wi-Fi power save) is still caught, then read the ARP table
+        prime(base, hosts, selfIp);
+        Thread.sleep(1500);
+        readArp(System.currentTimeMillis());
+        prime(base, hosts, selfIp);
+        Thread.sleep(2000);
         readArp(System.currentTimeMillis());
 
         // 3. UPnP / SSDP: friendly names, models, and the router's status
         ssdp(wm, System.currentTimeMillis());
+
+        // 3b. mDNS: the device's own name (Windows, Macs, phones, Chromecast-style boxes ...)
+        mdnsNames();
 
         // 4. names from the router's DNS
         reverseDns();
@@ -470,6 +483,16 @@ final class NetScanner {
             }
             d.custom = dp.getString("name_" + k, "");
             d.isNew = first > 1 && now - first < NEW_FOR_MS && d.custom.isEmpty();
+            // remember the device, so it can still be listed (as offline) after it leaves the network
+            e.putLong("last_" + k, d.lastSeen);
+            e.putString("ip_" + k, d.ip);
+            if (!d.vendor.isEmpty()) {
+                e.putString("vendor_" + k, d.vendor);
+            }
+            String label = !d.name.isEmpty() ? d.name : d.model;
+            if (!label.isEmpty() && !d.self) {
+                e.putString("label_" + k, label);
+            }
         }
         if (baseline) {
             e.putBoolean("baseline", true);
@@ -498,6 +521,238 @@ final class NetScanner {
 
     private static String key(String mac) {
         return mac.replace(":", "").replace("-", "").toUpperCase(Locale.US);
+    }
+
+    // ---------------------------------------------------------------- discovery helpers
+
+    /** Sends one tiny UDP packet (discard port) to every address; the OS asks "who has this address?" for each. */
+    private void prime(int base, int hosts, int selfIp) {
+        try (DatagramSocket s = new DatagramSocket()) {
+            byte[] nudge = new byte[] {0};
+            for (int h = 1; h < hosts; h++) {
+                int addr = base | h;
+                if (addr == selfIp) {
+                    continue;
+                }
+                try {
+                    InetAddress a = InetAddress.getByAddress(bytes(addr));
+                    if (NetPolicy.isLocal(a)) {
+                        s.send(new DatagramPacket(nudge, nudge.length, a, 9));
+                    }
+                } catch (Exception ignored) {
+                    // address not usable right now
+                }
+            }
+        } catch (Exception ignored) {
+            // no socket: the sweep results remain
+        }
+    }
+
+    /** Asks each known device without a name for its mDNS host name; an answer also proves it is awake. */
+    private void mdnsNames() {
+        List<Device> targets = new ArrayList<>();
+        long now = System.currentTimeMillis();
+        for (Device d : byIp.values()) {
+            if (!d.self && d.name.isEmpty() && d.custom.isEmpty() && now - d.lastSeen <= ONLINE_WINDOW_MS) {
+                targets.add(d);
+            }
+        }
+        if (targets.isEmpty()) {
+            return;
+        }
+        try (DatagramSocket s = new DatagramSocket()) {
+            s.setSoTimeout(300);
+            Map<Integer, Device> waiting = new HashMap<>();
+            int id = 1;
+            for (Device d : targets) {
+                InetAddress a = InetAddress.getByName(d.ip);
+                if (!NetPolicy.isLocal(a)) {
+                    continue;
+                }
+                byte[] q = dnsQuery(id, reverseName(d.ip));
+                waiting.put(id, d);
+                id++;
+                s.send(new DatagramPacket(q, q.length, a, 5353));
+            }
+            long end = SystemClock.elapsedRealtime() + 1500;
+            byte[] buf = new byte[1500];
+            while (SystemClock.elapsedRealtime() < end && !waiting.isEmpty()) {
+                DatagramPacket p = new DatagramPacket(buf, buf.length);
+                try {
+                    s.receive(p);
+                } catch (SocketTimeoutException e) {
+                    continue;
+                }
+                if (p.getLength() < 12) {
+                    continue;
+                }
+                int replyId = ((buf[0] & 0xff) << 8) | (buf[1] & 0xff);
+                Device d = waiting.get(replyId);
+                if (d == null) {
+                    continue;
+                }
+                waiting.remove(replyId);
+                long t = System.currentTimeMillis();
+                d.lastSeen = t;
+                d.lastActive = t;
+                String n = ptrAnswer(Arrays.copyOf(buf, p.getLength()));
+                if (n != null) {
+                    if (n.endsWith(".local")) {
+                        n = n.substring(0, n.length() - 6);
+                    }
+                    if (!n.isEmpty() && d.name.isEmpty()) {
+                        d.name = n;
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // mDNS is best effort
+        }
+    }
+
+    private static String reverseName(String ip) {
+        String[] o = ip.split("\\.");
+        return o[3] + "." + o[2] + "." + o[1] + "." + o[0] + ".in-addr.arpa";
+    }
+
+    private static byte[] dnsQuery(int id, String name) {
+        ByteArrayOutputStream o = new ByteArrayOutputStream();
+        o.write(id >> 8);
+        o.write(id);
+        o.write(0);
+        o.write(0);
+        o.write(0);
+        o.write(1);
+        for (int i = 0; i < 6; i++) {
+            o.write(0);
+        }
+        for (String label : name.split("\\.")) {
+            byte[] b = label.getBytes(StandardCharsets.US_ASCII);
+            o.write(b.length);
+            o.write(b, 0, b.length);
+        }
+        o.write(0);
+        o.write(0);
+        o.write(12);
+        o.write(0);
+        o.write(1);
+        return o.toByteArray();
+    }
+
+    private static int skipName(byte[] m, int off) {
+        while (off < m.length) {
+            int len = m[off] & 0xff;
+            if (len == 0) {
+                return off + 1;
+            }
+            if ((len & 0xC0) == 0xC0) {
+                return off + 2;
+            }
+            off += len + 1;
+        }
+        return m.length;
+    }
+
+    private static String readName(byte[] m, int start) {
+        StringBuilder sb = new StringBuilder();
+        int off = start;
+        int guard = 0;
+        while (off < m.length && guard++ < 40) {
+            int len = m[off] & 0xff;
+            if (len == 0) {
+                break;
+            }
+            if ((len & 0xC0) == 0xC0) {
+                if (off + 1 >= m.length) {
+                    break;
+                }
+                off = ((len & 0x3F) << 8) | (m[off + 1] & 0xff);
+                continue;
+            }
+            if (off + 1 + len > m.length) {
+                break;
+            }
+            if (sb.length() > 0) {
+                sb.append('.');
+            }
+            sb.append(new String(m, off + 1, len, StandardCharsets.UTF_8));
+            off += len + 1;
+        }
+        return sb.toString();
+    }
+
+    /** The first PTR answer in a DNS reply, or null. */
+    private static String ptrAnswer(byte[] m) {
+        int questions = ((m[4] & 0xff) << 8) | (m[5] & 0xff);
+        int answers = ((m[6] & 0xff) << 8) | (m[7] & 0xff);
+        int off = 12;
+        for (int i = 0; i < questions; i++) {
+            off = skipName(m, off) + 4;
+        }
+        for (int i = 0; i < answers && off + 10 <= m.length; i++) {
+            off = skipName(m, off);
+            if (off + 10 > m.length) {
+                break;
+            }
+            int type = ((m[off] & 0xff) << 8) | (m[off + 1] & 0xff);
+            int rdlen = ((m[off + 8] & 0xff) << 8) | (m[off + 9] & 0xff);
+            off += 10;
+            if (type == 12) {
+                String n = readName(m, off);
+                if (!n.isEmpty()) {
+                    return n;
+                }
+            }
+            off += rdlen;
+        }
+        return null;
+    }
+
+    // ---------------------------------------------------------------- remembered (offline) devices
+
+    /** Devices this TV has seen in the last 30 days that are not on the network now, most recent first. */
+    List<Device> offlineKnown() {
+        SharedPreferences dp = ctx.getSharedPreferences(DEVICES, Context.MODE_PRIVATE);
+        Set<String> online = new HashSet<>();
+        for (Device d : snapshot()) {
+            if (!d.mac.isEmpty()) {
+                online.add(key(d.mac));
+            }
+        }
+        long now = System.currentTimeMillis();
+        List<Device> out = new ArrayList<>();
+        for (String entry : dp.getAll().keySet()) {
+            if (!entry.startsWith("last_")) {
+                continue;
+            }
+            String k = entry.substring(5);
+            long last = dp.getLong(entry, 0);
+            if (online.contains(k) || last <= 0 || now - last > 30L * 24 * 3600 * 1000) {
+                continue;
+            }
+            Device d = new Device(dp.getString("ip_" + k, ""));
+            d.mac = formatMac(k);
+            d.custom = dp.getString("name_" + k, "");
+            d.name = dp.getString("label_" + k, "");
+            d.vendor = dp.getString("vendor_" + k, "");
+            d.lastSeen = last;
+            d.firstSeen = dp.getLong("first_" + k, 0);
+            d.offline = true;
+            out.add(d);
+        }
+        Collections.sort(out, (a, b) -> Long.compare(b.lastSeen, a.lastSeen));
+        return out;
+    }
+
+    private static String formatMac(String key) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i + 1 < key.length(); i += 2) {
+            if (sb.length() > 0) {
+                sb.append(':');
+            }
+            sb.append(key, i, i + 2);
+        }
+        return sb.toString();
     }
 
     // ---------------------------------------------------------------- helpers

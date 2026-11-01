@@ -2,6 +2,12 @@
 
 Release numbers follow the CI run (`build-N` = version 1.0.N).
 
+## 1.0.19
+- Devices: no device should hide. Discovery now nudges every address twice (forcing an ARP lookup even for
+  devices that ignore pings or are slow in Wi-Fi power save), asks each unnamed device for its mDNS name
+  (an answer also marks it ACTIVE), and remembers every device seen in the last 30 days, listing those
+  not on the network as OFFLINE with "last seen ... ago".
+
 ## 1.0.18
 - ARC SEARCH: focus starts on SmartTube's first result even when the web section answers first.
 
