@@ -8,6 +8,7 @@ import android.graphics.drawable.StateListDrawable;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.LinearLayout;
+import android.widget.ScrollView;
 import android.widget.TextView;
 
 /** HUD-styled prompt with D-pad focusable buttons. */
@@ -25,6 +26,7 @@ final class SetupCard extends LinearLayout {
     private final TextView heading;
     private final TextView body;
     private final LinearLayout buttons;
+    private final ScrollView scroll;
 
     SetupCard(Context context) {
         super(context);
@@ -44,9 +46,11 @@ final class SetupCard extends LinearLayout {
         body.setLineSpacing(0, 1.2f);
         buttons = new LinearLayout(context);
         buttons.setOrientation(HORIZONTAL);
+        scroll = new ScrollView(context);
+        scroll.addView(buttons);
         addView(heading);
         addView(body);
-        addView(buttons);
+        addView(scroll, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
         setVisibility(GONE);
     }
 
@@ -55,6 +59,14 @@ final class SetupCard extends LinearLayout {
     }
 
     void show(String title, String message, String[] labels, Action[] actions) {
+        show(title, message, labels, actions, false);
+    }
+
+    /** vertical = one button per line, scrolling when long (used for lists). */
+    void show(String title, String message, String[] labels, Action[] actions, boolean vertical) {
+        buttons.setOrientation(vertical ? VERTICAL : HORIZONTAL);
+        scroll.getLayoutParams().height = vertical && labels.length > 6 ? dp(300) : LayoutParams.WRAP_CONTENT;
+        scroll.requestLayout();
         heading.setText(title);
         body.setText(message);
         buttons.removeAllViews();
@@ -62,8 +74,13 @@ final class SetupCard extends LinearLayout {
             TextView b = button(labels[i]);
             final Action action = actions[i];
             b.setOnClickListener(v -> action.run());
-            LayoutParams lp = new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
-            lp.setMarginEnd(dp(12));
+            LayoutParams lp = new LayoutParams(vertical ? LayoutParams.MATCH_PARENT : LayoutParams.WRAP_CONTENT,
+                    LayoutParams.WRAP_CONTENT);
+            if (vertical) {
+                lp.bottomMargin = dp(8);
+            } else {
+                lp.setMarginEnd(dp(12));
+            }
             buttons.addView(b, lp);
         }
         setVisibility(VISIBLE);

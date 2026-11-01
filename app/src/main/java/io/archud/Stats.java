@@ -27,8 +27,8 @@ final class Stats {
     private static final float FULL_SCALE_KBPS = 4096f;
 
     private final Context ctx;
-    private final String macOverride;
-    private final String ssidOverride;
+    private String macOverride;
+    private String ssidOverride;
 
     final String host;
     final String chipset;
@@ -72,13 +72,16 @@ final class Stats {
         chipset = (Build.HARDWARE + " x" + Runtime.getRuntime().availableProcessors()).toUpperCase(Locale.US);
         os = "ANDROID " + Build.VERSION.RELEASE + " (API " + Build.VERSION.SDK_INT + ")";
         // Optional per-device values for fields the OS hides from apps (set once via HudActivity extras).
-        SharedPreferences prefs = context.getSharedPreferences(HudActivity.PREFS, Context.MODE_PRIVATE);
-        macOverride = prefs.getString("mac", "");
-        ssidOverride = prefs.getString("ssid", "");
+        reloadOverrides(context.getSharedPreferences(HudActivity.PREFS, Context.MODE_PRIVATE));
         PackageManager pm = context.getPackageManager();
         remoteApp = installed(pm, "com.vs.phoneremote.google");
         castApp = installed(pm, "org.smarttube.stable") || installed(pm, "com.google.android.youtube.tv");
         mirrorApp = installed(pm, "com.vstv.mcast");
+    }
+
+    void reloadOverrides(SharedPreferences prefs) {
+        macOverride = prefs.getString(Prefs.MAC, "");
+        ssidOverride = prefs.getString(Prefs.SSID, "");
     }
 
     void refresh() {

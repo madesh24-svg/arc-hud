@@ -5,8 +5,10 @@ import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.os.BatteryManager;
 import android.provider.Settings;
 
 /**
@@ -62,6 +64,16 @@ final class ScreensaverSetup {
 
     int idleMinutes() {
         return timeoutMs() / 60000;
+    }
+
+    /**
+     * Android only starts a screensaver on idle while the device reports external power; otherwise it
+     * goes straight to sleep. Some TVs report no power source, so on those an idle timer would switch
+     * the TV off instead of showing the HUD. Only offer idle times where this is safe.
+     */
+    boolean idleSafe() {
+        Intent battery = ctx.registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+        return battery != null && battery.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0;
     }
 
     Intent pickerIntent() {

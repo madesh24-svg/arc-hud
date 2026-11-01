@@ -52,9 +52,11 @@ public class HudView extends View {
     private final SimpleDateFormat timeFormat = new SimpleDateFormat("HH:mm", Locale.US);
     private final SimpleDateFormat dateFormat = new SimpleDateFormat("EEE dd MMM yyyy", Locale.US);
     private final long start = SystemClock.uptimeMillis();
-    private final String title;
-    private final String subtitle;
-    private final String salutation;
+    private String title;
+    private String subtitle;
+    private String salutation;
+    private boolean showStatus = true;
+    private float speed = 1f;
     private final boolean home;
     private final float centerX;
     private final float centerY;
@@ -73,7 +75,7 @@ public class HudView extends View {
     private final Runnable frame = new Runnable() {
         @Override
         public void run() {
-            if (!running) {
+            if (!running || speed <= 0f) {
                 return;
             }
             invalidate();
@@ -88,6 +90,9 @@ public class HudView extends View {
                 return;
             }
             stats.refresh();
+            if (speed <= 0f) {
+                invalidate();
+            }
             handler.postDelayed(this, POLL_MS);
         }
     };
@@ -103,12 +108,25 @@ public class HudView extends View {
         centerX = home ? 930f : 640f;
         centerY = home ? 360f : 290f;
         frameMs = home ? HOME_FRAME_MS : FRAME_MS;
-        SharedPreferences prefs = context.getSharedPreferences(HudActivity.PREFS, Context.MODE_PRIVATE);
-        title = prefs.getString("title", "A.R.C.  H.U.D.");
-        subtitle = prefs.getString("subtitle", "ADAPTIVE RESPONSE CONSOLE");
-        salutation = prefs.getString("salutation", "");
         stats = new Stats(context.getApplicationContext());
         setKeepScreenOn(true);
+        reload();
+    }
+
+    /** Re-reads on-device settings; called when returning from ARC SETTINGS. */
+    public void reload() {
+        SharedPreferences prefs = Prefs.get(getContext());
+        title = prefs.getString(Prefs.TITLE, Prefs.DEFAULT_TITLE);
+        subtitle = prefs.getString(Prefs.SUBTITLE, Prefs.DEFAULT_SUBTITLE);
+        salutation = prefs.getString(Prefs.SALUTATION, "");
+        showStatus = prefs.getBoolean(Prefs.SHOW_STATUS, true);
+        speed = Prefs.animSpeed(getContext());
+        stats.reloadOverrides(prefs);
+        if (running) {
+            handler.removeCallbacks(frame);
+            handler.post(frame);
+        }
+        invalidate();
     }
 
     @Override
@@ -256,9 +274,10 @@ public class HudView extends View {
         float t = (SystemClock.uptimeMillis() - start) / 1000f;
         float cx = offX + centerX * scale;
         float cy = offY + centerY * scale;
-        spin(canvas, ringOuter, cx, cy, t * 4f);
-        spin(canvas, ringMid, cx, cy, -t * 9f);
-        spin(canvas, ringGold, cx, cy, t * 2.5f);
+        float st = t * speed;
+        spin(canvas, ringOuter, cx, cy, st * 4f);
+        spin(canvas, ringMid, cx, cy, -st * 9f);
+        spin(canvas, ringGold, cx, cy, st * 2.5f);
 
         canvas.save();
         canvas.translate(offX, offY);
@@ -405,6 +424,9 @@ public class HudView extends View {
         paint.setStrokeWidth(3f);
         paint.setColor(GOLD);
         c.drawLine(40, 122, 330, 122, paint);
+        if (!showStatus) {
+            return;
+        }
         String line = "IP " + s.ip + "   WI-FI " + (s.signal < 0 ? "--" : s.signal + "%")
                 + "   RAM " + s.ramText + "   DOWN " + s.rxText;
         label(c, line, 42, 146, s.healthy ? OK : WARN, 14, mono, Paint.Align.LEFT);

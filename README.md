@@ -17,6 +17,8 @@ HIDDEN, store the values once on the device (read them with adb, they are never 
 
     am start -n io.archud/.HudActivity --es mac "$(cat /sys/class/net/wlan0/address)" --es ssid "MyNetwork"
 
+(or type them in ARC SETTINGS > Network display)
+
 The Wi-Fi name also needs the location permission on Android 9+:
 
     pm grant io.archud android.permission.ACCESS_COARSE_LOCATION
@@ -42,7 +44,14 @@ MIT
 
 A second entry, ARC HOME, is a TV home screen: the live HUD as background with an Inputs row
 (HDMI and other passthrough inputs from the TV input list, plus Settings) and an Apps row.
-Phase 1 opens like a normal app; it is not registered as the system Home yet.
+Long-press OK on a tile to hide it or pin it to the front; a HIDDEN (n) tile at the end of the
+row brings hidden tiles back. Phase 1 opens like a normal app; it is not registered as the system Home yet.
+
+## ARC SETTINGS
+
+MENU on the remote (or the ARC SETTINGS tile) opens the app's own settings: greeting name, title,
+subtitle, status line, hidden/pinned tiles, Wi-Fi name / MAC display, screensaver, animation speed,
+update download and reset. Everything is stored on the device only.
 
 ## Screensaver setup
 

@@ -18,6 +18,7 @@ import android.os.Bundle;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.widget.FrameLayout;
 import android.widget.HorizontalScrollView;
@@ -33,17 +34,44 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/** Launcher home: live HUD background with Inputs and Apps rows on top. */
+/**
+ * Launcher home: live HUD background with Inputs and Apps rows on top.
+ * Long-press OK on a tile to hide it or pin it to the front; hidden tiles are listed at the end of each row.
+ */
 public class HomeActivity extends Activity {
     private static final int CYAN = 0xFF50DCFF;
     private static final int GOLD = 0xFFFFB93C;
     private static final int WHITE = 0xFFEBFAFF;
+    private static final int MUTED = 0xFF6E8A99;
     private static final int TILE_BG = 0xCC0A2236;
     private static final int TILE_EDGE = 0xFF2A7A9E;
 
+    /** A launchable tile: key is stable across rebuilds ("input:<id>" or "app:<package>"). */
+    private static final class Item {
+        final String key;
+        final String title;
+        final String caption;
+        final int captionColor;
+        final Drawable art;
+        final Intent intent;
+
+        Item(String key, String title, String caption, int captionColor, Drawable art, Intent intent) {
+            this.key = key;
+            this.title = title;
+            this.caption = caption;
+            this.captionColor = captionColor;
+            this.art = art;
+            this.intent = intent;
+        }
+    }
+
     private float px;
+    private HudView hud;
+    private SetupCard card;
     private LinearLayout inputsRow;
     private LinearLayout appsRow;
+    private List<Item> hiddenInputs = new ArrayList<>();
+    private List<Item> hiddenApps = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -51,11 +79,12 @@ public class HomeActivity extends Activity {
         px = getResources().getDisplayMetrics().widthPixels / 1280f;
 
         FrameLayout root = new FrameLayout(this);
-        root.addView(new HudView(this, true));
+        hud = new HudView(this, true);
+        root.addView(hud);
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(d(40), d(250), d(40), d(20));
+        content.setPadding(d(40), d(236), d(40), d(10));
         content.addView(heading("INPUTS"));
         inputsRow = row();
         content.addView(scroller(inputsRow));
@@ -64,24 +93,17 @@ public class HomeActivity extends Activity {
         content.addView(scroller(appsRow));
         root.addView(content, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT));
+
+        card = new SetupCard(this);
+        root.addView(card, new FrameLayout.LayoutParams(d(620), FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         setContentView(root);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        View focused = getCurrentFocus();
-        int focusedId = focused != null ? focused.getId() : View.NO_ID;
-        buildInputs();
-        buildApps();
-        View restore = focusedId != View.NO_ID ? findViewById(focusedId) : null;
-        if (restore != null) {
-            restore.requestFocus();
-        } else if (inputsRow.getChildCount() > 0) {
-            inputsRow.getChildAt(0).requestFocus();
-        } else if (appsRow.getChildCount() > 0) {
-            appsRow.getChildAt(0).requestFocus();
-        }
+        hud.reload();
+        rebuild(null);
     }
 
     @Override
@@ -93,52 +115,136 @@ public class HomeActivity extends Activity {
         }
     }
 
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_MENU && !card.isShowing()) {
+            openSettings();
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (card.isShowing()) {
+            closeCard();
+            return;
+        }
+        super.onBackPressed();
+    }
+
     // ---------------------------------------------------------------- rows
 
-    private void buildInputs() {
+    private void rebuild(String focusKey) {
+        View focused = getCurrentFocus();
+        Object keep = focusKey != null ? focusKey : (focused != null ? focused.getTag() : null);
+        Set<String> hidden = Prefs.hidden(this);
+        List<String> favs = Prefs.favs(this);
+
         inputsRow.removeAllViews();
-        TvInputManager tim = (TvInputManager) getSystemService(Context.TV_INPUT_SERVICE);
-        if (tim != null) {
-            List<TvInputInfo> inputs = new ArrayList<>(tim.getTvInputList());
-            Collections.sort(inputs, (a, b) -> label(a).compareToIgnoreCase(label(b)));
-            for (TvInputInfo info : inputs) {
-                if (!info.isPassthroughInput() || info.isHidden(this)) {
-                    continue;
-                }
-                boolean connected = tim.getInputState(info.getId()) == TvInputManager.INPUT_STATE_CONNECTED;
-                Intent watch = new Intent(Intent.ACTION_VIEW, TvContract.buildChannelUriForPassthroughInput(info.getId()));
-                inputsRow.addView(tile(label(info), connected ? "CONNECTED" : "NO SIGNAL", null, 150, 84,
-                        connected ? CYAN : 0xFF6E8A99, 1000 + inputsRow.getChildCount(), watch));
+        hiddenInputs = new ArrayList<>();
+        for (Item it : order(inputs(), favs)) {
+            if (hidden.contains(it.key)) {
+                hiddenInputs.add(it);
+            } else {
+                inputsRow.addView(tile(it, 150, 84, true));
             }
         }
-        Intent settings = new Intent(Settings.ACTION_SETTINGS);
-        if (settings.resolveActivity(getPackageManager()) != null) {
-            inputsRow.addView(tile("SETTINGS", "TV MENU", null, 150, 84, GOLD, 1999, settings));
+        Intent tvSettings = new Intent(Settings.ACTION_SETTINGS);
+        if (tvSettings.resolveActivity(getPackageManager()) != null) {
+            inputsRow.addView(tile(new Item("fixed:tv-settings", "TV SETTINGS", "TV MENU", GOLD, null, tvSettings), 150, 84, false));
+        }
+        inputsRow.addView(tile(new Item("fixed:arc-settings", "ARC SETTINGS", "THIS APP", GOLD, null,
+                new Intent(this, SettingsActivity.class)), 150, 84, false));
+        if (!hiddenInputs.isEmpty()) {
+            inputsRow.addView(hiddenTile(hiddenInputs, "fixed:hidden-inputs"));
+        }
+
+        appsRow.removeAllViews();
+        hiddenApps = new ArrayList<>();
+        for (Item it : order(apps(), favs)) {
+            if (hidden.contains(it.key)) {
+                hiddenApps.add(it);
+            } else {
+                appsRow.addView(tile(it, 200, 112, true));
+            }
+        }
+        if (!hiddenApps.isEmpty()) {
+            appsRow.addView(hiddenTile(hiddenApps, "fixed:hidden-apps"));
+        }
+
+        View restore = keep != null ? findTile(keep) : null;
+        if (restore == null) {
+            restore = inputsRow.getChildCount() > 0 ? inputsRow.getChildAt(0)
+                    : (appsRow.getChildCount() > 0 ? appsRow.getChildAt(0) : null);
+        }
+        if (restore != null) {
+            restore.requestFocus();
         }
     }
 
-    private void buildApps() {
-        appsRow.removeAllViews();
+    private View findTile(Object tag) {
+        for (LinearLayout r : new LinearLayout[] {inputsRow, appsRow}) {
+            for (int i = 0; i < r.getChildCount(); i++) {
+                if (tag.equals(r.getChildAt(i).getTag())) {
+                    return r.getChildAt(i);
+                }
+            }
+        }
+        return null;
+    }
+
+    private static List<Item> order(List<Item> items, List<String> favs) {
+        Collections.sort(items, (a, b) -> {
+            int fa = favs.indexOf(a.key);
+            int fb = favs.indexOf(b.key);
+            if (fa >= 0 && fb >= 0) {
+                return Integer.compare(fa, fb);
+            }
+            if (fa >= 0 || fb >= 0) {
+                return fa >= 0 ? -1 : 1;
+            }
+            return a.title.compareToIgnoreCase(b.title);
+        });
+        return items;
+    }
+
+    private List<Item> inputs() {
+        List<Item> out = new ArrayList<>();
+        TvInputManager tim = (TvInputManager) getSystemService(Context.TV_INPUT_SERVICE);
+        if (tim == null) {
+            return out;
+        }
+        for (TvInputInfo info : tim.getTvInputList()) {
+            if (!info.isPassthroughInput() || info.isHidden(this)) {
+                continue;
+            }
+            boolean connected = tim.getInputState(info.getId()) == TvInputManager.INPUT_STATE_CONNECTED;
+            CharSequence l = info.loadLabel(this);
+            String name = TextUtils.isEmpty(l) ? info.getId() : l.toString();
+            Intent watch = new Intent(Intent.ACTION_VIEW, TvContract.buildChannelUriForPassthroughInput(info.getId()));
+            out.add(new Item("input:" + info.getId(), name, connected ? "CONNECTED" : "NO SIGNAL",
+                    connected ? CYAN : MUTED, null, watch));
+        }
+        return out;
+    }
+
+    private List<Item> apps() {
         PackageManager pm = getPackageManager();
         List<ResolveInfo> found = new ArrayList<>();
         found.addAll(pm.queryIntentActivities(launcherIntent(Intent.CATEGORY_LEANBACK_LAUNCHER), 0));
         found.addAll(pm.queryIntentActivities(launcherIntent(Intent.CATEGORY_LAUNCHER), 0));
         Set<String> seen = new HashSet<>();
-        List<ResolveInfo> apps = new ArrayList<>();
+        List<Item> out = new ArrayList<>();
         for (ResolveInfo ri : found) {
             ActivityInfo ai = ri.activityInfo;
-            if (getPackageName().equals(ai.packageName) && HomeActivity.class.getName().equals(ai.name)) {
+            if (getPackageName().equals(ai.packageName) && !HudActivity.class.getName().equals(ai.name)) {
                 continue;
             }
-            if (seen.add(ai.packageName)) {
-                apps.add(ri);
+            if (!seen.add(ai.packageName + "/" + (getPackageName().equals(ai.packageName) ? ai.name : ""))) {
+                continue;
             }
-        }
-        Collections.sort(apps, (a, b) -> a.loadLabel(pm).toString().compareToIgnoreCase(b.loadLabel(pm).toString()));
-        int id = 2000;
-        for (ResolveInfo ri : apps) {
-            ActivityInfo ai = ri.activityInfo;
-            Intent launch = pm.getLeanbackLaunchIntentForPackage(ai.packageName);
+            Intent launch = getPackageName().equals(ai.packageName) ? null : pm.getLeanbackLaunchIntentForPackage(ai.packageName);
             if (launch == null) {
                 launch = new Intent(Intent.ACTION_MAIN).setComponent(new ComponentName(ai.packageName, ai.name));
             }
@@ -146,42 +252,127 @@ public class HomeActivity extends Activity {
             if (art == null) {
                 art = ai.loadIcon(pm);
             }
-            appsRow.addView(tile(ri.loadLabel(pm).toString(), null, art, 200, 112, CYAN, id++, launch));
+            out.add(new Item("app:" + ai.packageName, ri.loadLabel(pm).toString(), null, CYAN, art, launch));
         }
+        return out;
     }
 
     private static Intent launcherIntent(String category) {
         return new Intent(Intent.ACTION_MAIN).addCategory(category);
     }
 
-    private String label(TvInputInfo info) {
-        CharSequence l = info.loadLabel(this);
-        return TextUtils.isEmpty(l) ? info.getId() : l.toString();
+    // ---------------------------------------------------------------- tile actions
+
+    private void tileMenu(Item it) {
+        List<String> favs = Prefs.favs(this);
+        boolean pinned = favs.contains(it.key);
+        card.show(it.title.toUpperCase(Locale.US), "Choose an action for this tile.",
+                new String[] {"HIDE", pinned ? "UNPIN" : "PIN TO FRONT", "CANCEL"},
+                new SetupCard.Action[] {
+                    () -> {
+                        Set<String> hidden = Prefs.hidden(this);
+                        hidden.add(it.key);
+                        Prefs.setHidden(this, hidden);
+                        card.hide();
+                        rebuild(null);
+                    },
+                    () -> {
+                        List<String> f = Prefs.favs(this);
+                        if (pinned) {
+                            f.remove(it.key);
+                        } else {
+                            f.remove(it.key);
+                            f.add(it.key);
+                        }
+                        Prefs.setFavs(this, f);
+                        card.hide();
+                        rebuild(it.key);
+                    },
+                    this::closeCard});
+    }
+
+    private void showHidden(List<Item> items) {
+        int n = items.size();
+        String[] labels = new String[n + 2];
+        SetupCard.Action[] actions = new SetupCard.Action[n + 2];
+        for (int i = 0; i < n; i++) {
+            Item it = items.get(i);
+            labels[i] = "SHOW  " + it.title.toUpperCase(Locale.US);
+            actions[i] = () -> unhide(Collections.singletonList(it.key), it.key);
+        }
+        List<String> all = new ArrayList<>();
+        for (Item it : items) {
+            all.add(it.key);
+        }
+        labels[n] = "SHOW ALL";
+        actions[n] = () -> unhide(all, null);
+        labels[n + 1] = "CANCEL";
+        actions[n + 1] = this::closeCard;
+        card.show("HIDDEN TILES", "Pick a tile to show it again.", labels, actions, true);
+    }
+
+    private void unhide(List<String> keys, String focusKey) {
+        Set<String> hidden = Prefs.hidden(this);
+        hidden.removeAll(keys);
+        Prefs.setHidden(this, hidden);
+        card.hide();
+        rebuild(focusKey);
+    }
+
+    private void closeCard() {
+        card.hide();
+        rebuild(null);
+    }
+
+    private void openSettings() {
+        startActivity(new Intent(this, SettingsActivity.class));
+    }
+
+    private void open(Intent intent, String title) {
+        try {
+            startActivity(new Intent(intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (ActivityNotFoundException | SecurityException e) {
+            Toast.makeText(this, "Cannot open " + title, Toast.LENGTH_SHORT).show();
+        }
     }
 
     // ---------------------------------------------------------------- views
 
-    private View tile(String title, String caption, Drawable art, int w, int h, int accent, int id, Intent intent) {
+    private View hiddenTile(List<Item> items, String key) {
+        Item it = new Item(key, "HIDDEN (" + items.size() + ")", "SHOW AGAIN", GOLD, null, null);
+        View t = tile(it, 150, 84, false);
+        t.setOnClickListener(v -> showHidden(items));
+        return t;
+    }
+
+    private View tile(Item it, int w, int h, boolean editable) {
         FrameLayout t = new FrameLayout(this);
-        t.setId(id);
+        t.setTag(it.key);
         t.setFocusable(true);
         t.setClickable(true);
         t.setBackground(frame(TILE_EDGE, 1));
         t.setPadding(d(6), d(6), d(6), d(6));
 
-        if (art != null) {
+        if (it.art != null) {
             ImageView iv = new ImageView(this);
-            iv.setImageDrawable(art);
+            iv.setImageDrawable(it.art);
             iv.setScaleType(ImageView.ScaleType.FIT_CENTER);
             t.addView(iv, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.MATCH_PARENT));
+            TextView name = text(it.title, 12, WHITE, false);
+            name.setSingleLine(true);
+            name.setEllipsize(TextUtils.TruncateAt.END);
+            name.setBackgroundColor(0xCC020A18);
+            name.setPadding(d(6), d(2), d(6), d(2));
+            t.addView(name, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM));
         } else {
             LinearLayout text = new LinearLayout(this);
             text.setOrientation(LinearLayout.VERTICAL);
             text.setGravity(Gravity.CENTER);
-            text.addView(text(title.toUpperCase(Locale.US), 17, WHITE, true));
-            if (caption != null) {
-                text.addView(text(caption, 11, accent, false));
+            text.addView(text(it.title.toUpperCase(Locale.US), 16, WHITE, true));
+            if (it.caption != null) {
+                text.addView(text(it.caption, 11, it.captionColor, false));
             }
             t.addView(text, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.MATCH_PARENT));
@@ -191,7 +382,15 @@ public class HomeActivity extends Activity {
             v.setBackground(focused ? frame(CYAN, 3) : frame(TILE_EDGE, 1));
             v.animate().scaleX(focused ? 1.08f : 1f).scaleY(focused ? 1.08f : 1f).setDuration(120).start();
         });
-        t.setOnClickListener(v -> open(intent, title));
+        if (it.intent != null) {
+            t.setOnClickListener(v -> open(it.intent, it.title));
+        }
+        if (editable) {
+            t.setOnLongClickListener(v -> {
+                tileMenu(it);
+                return true;
+            });
+        }
 
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(d(w), d(h));
         lp.setMarginEnd(d(18));
@@ -199,14 +398,6 @@ public class HomeActivity extends Activity {
         lp.bottomMargin = d(8);
         t.setLayoutParams(lp);
         return t;
-    }
-
-    private void open(Intent intent, String title) {
-        try {
-            startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-        } catch (ActivityNotFoundException | SecurityException e) {
-            Toast.makeText(this, "Cannot open " + title, Toast.LENGTH_SHORT).show();
-        }
     }
 
     private GradientDrawable frame(int edge, int width) {
@@ -219,7 +410,8 @@ public class HomeActivity extends Activity {
 
     private TextView heading(String s) {
         TextView t = text(s, 15, GOLD, true);
-        t.setPadding(d(4), d(14), 0, 0);
+        t.setGravity(Gravity.START);
+        t.setPadding(d(10), d(14), 0, 0);
         return t;
     }
 

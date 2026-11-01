@@ -23,6 +23,7 @@ public class HudActivity extends Activity {
     private SharedPreferences prefs;
     private ScreensaverSetup setup;
     private SetupCard card;
+    private HudView hud;
     private boolean offeredThisSession;
     private boolean awaitingPicker;
 
@@ -45,7 +46,8 @@ public class HudActivity extends Activity {
 
         setup = new ScreensaverSetup(this);
         FrameLayout root = new FrameLayout(this);
-        root.addView(new HudView(this));
+        hud = new HudView(this);
+        root.addView(hud);
         card = new SetupCard(this);
         int width = (int) (560 * getResources().getDisplayMetrics().density);
         root.addView(card, new FrameLayout.LayoutParams(width, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
@@ -55,6 +57,7 @@ public class HudActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        hud.reload();
         if (awaitingPicker) {
             awaitingPicker = false;
             if (setup.isActive()) {
@@ -79,8 +82,11 @@ public class HudActivity extends Activity {
 
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        boolean openKey = keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_DPAD_CENTER
-                || keyCode == KeyEvent.KEYCODE_ENTER;
+        if (keyCode == KeyEvent.KEYCODE_MENU && !card.isShowing()) {
+            startActivity(new Intent(this, SettingsActivity.class));
+            return true;
+        }
+        boolean openKey = keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER;
         if (openKey && !card.isShowing()) {
             manage();
             return true;
@@ -116,7 +122,7 @@ public class HudActivity extends Activity {
         }
         String idle = setup.idleNever() ? "The TV idle timer is off, so it will not start by itself."
                 : "It starts after " + setup.idleMinutes() + " min without remote input.";
-        if (setup.canWriteSystem()) {
+        if (setup.canWriteSystem() && setup.idleSafe()) {
             card.show("SCREENSAVER", "ARC HUD is the screensaver.\n" + idle,
                     new String[] {"CHANGE IDLE TIME", "RESTORE ORIGINAL", "CLOSE"},
                     new SetupCard.Action[] {this::chooseIdle, this::restore, card::hide});
@@ -144,7 +150,11 @@ public class HudActivity extends Activity {
             info("SCREENSAVER SETUP", "The TV refused the change.\nNothing was changed.");
             return;
         }
-        if (setup.canWriteSystem()) {
+        if (!setup.idleSafe()) {
+            done("ARC HUD is now the screensaver.
+This TV switches itself off instead of starting screensavers "
+                    + "when idle, so the idle timer was left unchanged.");
+        } else if (setup.canWriteSystem()) {
             chooseIdle();
         } else if (setup.idleNever()) {
             done("ARC HUD is now the screensaver.\nThe TV idle timer is off, so it will not start by itself.");
@@ -160,6 +170,12 @@ public class HudActivity extends Activity {
     }
 
     private void idle(int minutes) {
+        if (!setup.idleSafe()) {
+            info("IDLE TIME", "This TV switches itself off instead of starting screensavers when idle.
+"
+                    + "The idle timer was left unchanged.");
+            return;
+        }
         if (!setup.isActive()) {
             info("IDLE TIME", "The screensaver is not active, so the idle time was not changed.");
             return;
@@ -186,7 +202,7 @@ public class HudActivity extends Activity {
 
     private void neverAsk() {
         prefs.edit().putBoolean(NEVER_ASK, true).apply();
-        info("OK", "I will not ask again.\nPress OK on the HUD any time to set it up.");
+        info("OK", "I will not ask again.\nPress OK on the HUD, or MENU for ARC SETTINGS, any time.");
     }
 
     private void info(String title, String message) {
