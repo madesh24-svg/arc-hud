@@ -30,24 +30,20 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
 
+        <!-- Full-screen HUD: opened from the FULL HUD tile (no launcher entry of its own, because most
+             TV launchers show only one tile per app). Exported so it can be personalised via am start. -->
         <activity
             android:name=".HudActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="true"
-            android:screenOrientation="landscape">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:screenOrientation="landscape" />
 
-        <!-- Launcher home (phase 1: opened like an app; not registered as HOME yet). -->
+        <!-- The app's single launcher entry: the home screen with tiles. Not registered as HOME yet. -->
         <activity
             android:name=".HomeActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="true"
-            android:label="@string/home_name"
+            android:label="@string/app_name"
             android:launchMode="singleTask"
             android:screenOrientation="landscape">
             <intent-filter>

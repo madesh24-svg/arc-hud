@@ -2,6 +2,10 @@
 
 Release numbers follow the CI run (`build-N` = version 1.0.N).
 
+## 1.0.11
+- One launcher entry: the app tile now opens the home screen (most TV launchers show one tile per
+  app, so the full-screen HUD was the only thing reachable). The HUD moved to a FULL HUD tile.
+
 ## 1.0.10
 - Network devices: DEVICES tile and screen in ARC HOME, device count on the HUD. Scans the local
   network once a minute while shown (never in the background): ping sweep, ARP table, router DNS
