@@ -29,14 +29,17 @@ import android.widget.Toast;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Locale;
 import java.util.Set;
 
 /**
  * Launcher home: live HUD background with Inputs and Apps rows on top.
- * Long-press OK on a tile to hide it or pin it to the front; hidden tiles are listed at the end of each row.
+ * MENU on a tile (or long-press OK where the remote supports it) hides it or pins it to the front;
+ * hidden tiles are listed at the end of each row. MENU elsewhere opens ARC SETTINGS.
  */
 public class HomeActivity extends Activity {
     private static final int CYAN = 0xFF50DCFF;
@@ -72,6 +75,7 @@ public class HomeActivity extends Activity {
     private LinearLayout appsRow;
     private List<Item> hiddenInputs = new ArrayList<>();
     private List<Item> hiddenApps = new ArrayList<>();
+    private final Map<String, Item> editableItems = new HashMap<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -118,7 +122,14 @@ public class HomeActivity extends Activity {
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_MENU && !card.isShowing()) {
-            openSettings();
+            // IR remotes send one short press per tap, so MENU (not long-press) is the reliable way in.
+            View focused = getCurrentFocus();
+            Item it = focused != null ? editableItems.get(String.valueOf(focused.getTag())) : null;
+            if (it != null) {
+                tileMenu(it);
+            } else {
+                openSettings();
+            }
             return true;
         }
         return super.onKeyDown(keyCode, event);
@@ -140,6 +151,7 @@ public class HomeActivity extends Activity {
         Object keep = focusKey != null ? focusKey : (focused != null ? focused.getTag() : null);
         Set<String> hidden = Prefs.hidden(this);
         List<String> favs = Prefs.favs(this);
+        editableItems.clear();
 
         inputsRow.removeAllViews();
         hiddenInputs = new ArrayList<>();
@@ -267,7 +279,7 @@ public class HomeActivity extends Activity {
         List<String> favs = Prefs.favs(this);
         boolean pinned = favs.contains(it.key);
         card.show(it.title.toUpperCase(Locale.US), "Choose an action for this tile.",
-                new String[] {"HIDE", pinned ? "UNPIN" : "PIN TO FRONT", "CANCEL"},
+                new String[] {"HIDE", pinned ? "UNPIN" : "PIN TO FRONT", "ARC SETTINGS", "CANCEL"},
                 new SetupCard.Action[] {
                     () -> {
                         Set<String> hidden = Prefs.hidden(this);
@@ -287,6 +299,10 @@ public class HomeActivity extends Activity {
                         Prefs.setFavs(this, f);
                         card.hide();
                         rebuild(it.key);
+                    },
+                    () -> {
+                        card.hide();
+                        openSettings();
                     },
                     this::closeCard});
     }
@@ -386,6 +402,7 @@ public class HomeActivity extends Activity {
             t.setOnClickListener(v -> open(it.intent, it.title));
         }
         if (editable) {
+            editableItems.put(it.key, it);
             t.setOnLongClickListener(v -> {
                 tileMenu(it);
                 return true;

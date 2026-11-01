@@ -91,7 +91,7 @@ public class SettingsActivity extends Activity {
                     Prefs.setFavs(this, new java.util.ArrayList<String>());
                     rebuild();
                 }));
-        row("Tip", "LONG-PRESS OK ON A TILE", null);
+        row("Tip", "PRESS MENU ON A TILE", null);
 
         section("NETWORK DISPLAY");
         row("Wi-Fi name", value(Prefs.SSID, "AUTO"), () -> edit(Prefs.SSID, "Wi-Fi name (empty = auto)", ""));

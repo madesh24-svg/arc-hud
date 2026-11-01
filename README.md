@@ -44,7 +44,7 @@ MIT
 
 A second entry, ARC HOME, is a TV home screen: the live HUD as background with an Inputs row
 (HDMI and other passthrough inputs from the TV input list, plus Settings) and an Apps row.
-Long-press OK on a tile to hide it or pin it to the front; a HIDDEN (n) tile at the end of the
+Press MENU on a tile (or long-press OK, if your remote supports it) to hide it or pin it to the front; a HIDDEN (n) tile at the end of the
 row brings hidden tiles back. Phase 1 opens like a normal app; it is not registered as the system Home yet.
 
 ## ARC SETTINGS
