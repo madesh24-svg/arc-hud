@@ -2,6 +2,10 @@
 
 Release numbers follow the CI run (`build-N` = version 1.0.N).
 
+## 1.0.12
+- After an in-app update the home screen reopens by itself and shows "ARC HUD updated to 1.0.x"
+  (Android closes an app while updating it, which looked like nothing happened).
+
 ## 1.0.11
 - One launcher entry: the app tile now opens the home screen (most TV launchers show one tile per
   app, so the full-screen HUD was the only thing reachable). The HUD moved to a FULL HUD tile.
