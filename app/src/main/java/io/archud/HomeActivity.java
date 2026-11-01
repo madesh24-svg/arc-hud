@@ -291,9 +291,17 @@ public class HomeActivity extends Activity {
         found.addAll(pm.queryIntentActivities(launcherIntent(Intent.CATEGORY_LAUNCHER), 0));
         Set<String> seen = new HashSet<>();
         List<Item> out = new ArrayList<>();
+        // The fixed TV SETTINGS tile already opens the device's settings screen; do not list it twice.
+        ResolveInfo settings = pm.resolveActivity(new Intent(Settings.ACTION_SETTINGS), 0);
+        ComponentName settingsTarget = settings != null && settings.activityInfo != null
+                ? new ComponentName(settings.activityInfo.packageName, settings.activityInfo.name) : null;
         for (ResolveInfo ri : found) {
             ActivityInfo ai = ri.activityInfo;
             if (getPackageName().equals(ai.packageName) && !HudActivity.class.getName().equals(ai.name)) {
+                continue;
+            }
+            if (settingsTarget != null && settingsTarget.getPackageName().equals(ai.packageName)
+                    && settingsTarget.getClassName().equals(ai.name)) {
                 continue;
             }
             if (!seen.add(ai.packageName + "/" + (getPackageName().equals(ai.packageName) ? ai.name : ""))) {

@@ -2,6 +2,10 @@
 
 Release numbers follow the CI run (`build-N` = version 1.0.N).
 
+## 1.0.20
+- The Apps row no longer lists the device's own Settings app a second time: the fixed TV SETTINGS tile
+  already opens the same screen.
+
 ## 1.0.19
 - Devices: no device should hide. Discovery now nudges every address twice (forcing an ARP lookup even for
   devices that ignore pings or are slow in Wi-Fi power save), asks each unnamed device for its mDNS name
