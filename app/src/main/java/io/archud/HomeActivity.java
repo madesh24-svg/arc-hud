@@ -149,7 +149,26 @@ public class HomeActivity extends Activity {
             closeCard();
             return;
         }
+        if (isDefaultHome()) {
+            return; // the home screen has nowhere to go back to
+        }
         super.onBackPressed();
+    }
+
+    /** HOME pressed while already here: close any popup and return to the first tile. */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (intent != null && intent.hasCategory(Intent.CATEGORY_HOME)) {
+            card.hide();
+            rebuild("");
+        }
+    }
+
+    private boolean isDefaultHome() {
+        ResolveInfo home = getPackageManager().resolveActivity(
+                new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME), PackageManager.MATCH_DEFAULT_ONLY);
+        return home != null && home.activityInfo != null && getPackageName().equals(home.activityInfo.packageName);
     }
 
     // ---------------------------------------------------------------- rows

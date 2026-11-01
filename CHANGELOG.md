@@ -2,6 +2,10 @@
 
 Release numbers follow the CI run (`build-N` = version 1.0.N).
 
+## 1.0.15
+- ARC HOME can be the TV's home screen (HOME registration). When it is the default home, BACK no
+  longer leaves it, and HOME closes any popup and returns to the first tile.
+
 ## 1.0.14
 - Kotlin enabled alongside Java (Kotlin 2.0.21). New code is Kotlin; files move over when touched.
   First Kotlin file: UpdatedReceiver. Release builds are now shrunk with R8.
