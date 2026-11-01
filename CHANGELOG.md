@@ -2,6 +2,9 @@
 
 Release numbers follow the CI run (`build-N` = version 1.0.N).
 
+## 1.0.18
+- ARC SEARCH: focus starts on SmartTube's first result even when the web section answers first.
+
 ## 1.0.17
 - ARC SEARCH: a voice search (or the SEARCH tile) shows SmartTube's own top 10 results (MORE shows
   10 more) and web results (Wikipedia articles plus a DuckDuckGo row) that open in the TV browser.

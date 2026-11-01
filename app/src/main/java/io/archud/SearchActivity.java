@@ -13,6 +13,7 @@ import android.text.InputType;
 import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
@@ -59,7 +60,9 @@ public class SearchActivity extends Activity {
     private EditText input;
     private LinearLayout sections;
     private int generation;
-    private boolean focusPlaced;
+    /** True once the user has pressed a key; until then focus follows the top-most result. */
+    private boolean userMoved;
+    private final List<Section> built = new ArrayList<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -129,7 +132,8 @@ public class SearchActivity extends Activity {
     private void runSearch(final String query) {
         generation++;
         final int gen = generation;
-        focusPlaced = false;
+        userMoved = false;
+        built.clear();
         InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
         if (imm != null) {
             imm.hideSoftInputFromWindow(input.getWindowToken(), 0);
@@ -143,6 +147,7 @@ public class SearchActivity extends Activity {
             sections.addView(status);
             sections.addView(rows);
             final Section section = new Section(provider, status, rows);
+            built.add(section);
             new Thread(() -> {
                 List<SearchResult> found = null;
                 String error = null;
@@ -208,10 +213,27 @@ public class SearchActivity extends Activity {
         for (SearchResult r : pinned) {
             s.rows.addView(row(r));
         }
-        if (!focusPlaced && s.rows.getChildCount() > 0) {
-            focusPlaced = true;
-            s.rows.getChildAt(0).requestFocus();
+        if (!userMoved) {
+            focusTop();
         }
+    }
+
+    /** Focuses the first row of the first section that has any, in section order (not arrival order). */
+    private void focusTop() {
+        for (Section sec : built) {
+            if (sec.rows.getChildCount() > 0) {
+                sec.rows.getChildAt(0).requestFocus();
+                return;
+            }
+        }
+    }
+
+    @Override
+    public boolean dispatchKeyEvent(KeyEvent event) {
+        if (event.getAction() == KeyEvent.ACTION_DOWN) {
+            userMoved = true;
+        }
+        return super.dispatchKeyEvent(event);
     }
 
     private void open(SearchResult r) {
