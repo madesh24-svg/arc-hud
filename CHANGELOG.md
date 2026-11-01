@@ -2,6 +2,9 @@
 
 Release numbers follow the CI run (`build-N` = version 1.0.N).
 
+## 1.0.16
+- Small version line in the bottom-right corner of the home screen and HUD.
+
 ## 1.0.15
 - ARC HOME can be the TV's home screen (HOME registration). When it is the default home, BACK no
   longer leaves it, and HOME closes any popup and returns to the first tile.

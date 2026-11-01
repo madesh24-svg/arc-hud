@@ -58,6 +58,7 @@ public class HudView extends View {
     private boolean showStatus = true;
     private float speed = 1f;
     private final boolean home;
+    private final String versionText;
     private final float centerX;
     private final float centerY;
     private final long frameMs;
@@ -105,6 +106,13 @@ public class HudView extends View {
     public HudView(Context context, boolean home) {
         super(context);
         this.home = home;
+        String v;
+        try {
+            v = context.getPackageManager().getPackageInfo(context.getPackageName(), 0).versionName;
+        } catch (android.content.pm.PackageManager.NameNotFoundException e) {
+            v = "?";
+        }
+        versionText = "ARC HUD " + v;
         centerX = home ? 930f : 640f;
         centerY = home ? 360f : 290f;
         frameMs = home ? HOME_FRAME_MS : FRAME_MS;
@@ -456,6 +464,8 @@ public class HudView extends View {
         Date now = new Date();
         label(c, timeFormat.format(now), 1256, 62, WHITE, 46, condensed, Paint.Align.RIGHT);
         label(c, dateFormat.format(now).toUpperCase(Locale.US), 1256, 88, CYAN, 15, mono, Paint.Align.RIGHT);
+        // Version, small and out of the way in the bottom-right corner.
+        label(c, versionText, 1272, 714, 0x8096C8E1, 10, mono, Paint.Align.RIGHT);
     }
 
     private void drawTicker(Canvas c, float t) {
