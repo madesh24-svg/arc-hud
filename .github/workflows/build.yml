@@ -31,10 +31,19 @@ jobs:
         run: gradle assembleRelease --no-daemon --stacktrace
       - name: Rename
         run: cp app/build/outputs/apk/release/app-release.apk arc-hud.apk
+      # Manufacturer table (MAC prefix -> vendor) from Wireshark's public OUI list, published with the
+      # release so devices download it from this repo only. Optional: the release still ships without it.
+      - name: Build manufacturer table
+        continue-on-error: true
+        run: |
+          curl -fsSL --retry 3 https://www.wireshark.org/download/automated/data/manuf -o manuf.txt
+          python3 .github/scripts/build_oui.py manuf.txt oui.tsv.gz
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
           name: ARC HUD 1.0.${{ github.run_number }}
-          files: arc-hud.apk
+          files: |
+            arc-hud.apk
+            oui.tsv.gz
           make_latest: true

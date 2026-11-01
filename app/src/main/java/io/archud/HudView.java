@@ -135,14 +135,32 @@ public class HudView extends View {
         running = true;
         handler.post(poll);
         handler.post(frame);
+        NetScanner.get(getContext()).subscribe(devicesListener);
     }
 
     @Override
     protected void onDetachedFromWindow() {
         running = false;
         handler.removeCallbacksAndMessages(null);
+        NetScanner.get(getContext()).unsubscribe(devicesListener);
         super.onDetachedFromWindow();
     }
+
+    private int deviceCount = -1;
+    private int newDevices;
+    private String routerUptime;
+    private final NetScanner.Listener devicesListener = devices -> {
+        deviceCount = devices.size();
+        int fresh = 0;
+        for (NetScanner.Device d : devices) {
+            if (d.isNew) {
+                fresh++;
+            }
+        }
+        newDevices = fresh;
+        routerUptime = NetScanner.get(getContext()).routerUptime;
+        invalidate();
+    };
 
     @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
@@ -359,7 +377,8 @@ public class HudView extends View {
         row(c, rx, 366, pw, 1, "WI-FI REMOTE", s.remoteApp && s.wifiUp ? "ONLINE" : "OFFLINE", s.remoteApp && s.wifiUp ? OK : WARN);
         row(c, rx, 366, pw, 2, "CAST", s.castApp ? "READY" : "ABSENT", s.castApp ? OK : DIM);
         row(c, rx, 366, pw, 3, "MIRROR", s.mirrorApp ? "STANDBY" : "ABSENT", s.mirrorApp ? GOLD : DIM);
-        row(c, rx, 366, pw, 4, "NETWORK", s.wifiUp ? "CONNECTED" : "DOWN", s.wifiUp ? OK : WARN);
+        row(c, rx, 366, pw, 4, "DEVICES", deviceCount < 0 ? "SCANNING" : deviceCount + " ONLINE"
+                + (newDevices > 0 ? " / " + newDevices + " NEW" : ""), newDevices > 0 ? GOLD : OK);
     }
 
     private static int signalColor(int signal) {
@@ -428,7 +447,8 @@ public class HudView extends View {
             return;
         }
         String line = "IP " + s.ip + "   WI-FI " + (s.signal < 0 ? "--" : s.signal + "%")
-                + "   RAM " + s.ramText + "   DOWN " + s.rxText;
+                + "   RAM " + s.ramText + "   DOWN " + s.rxText
+                + (deviceCount < 0 ? "" : "   DEVICES " + deviceCount);
         label(c, line, 42, 146, s.healthy ? OK : WARN, 14, mono, Paint.Align.LEFT);
     }
 
@@ -447,6 +467,8 @@ public class HudView extends View {
         String status = s.healthy ? "ALL SYSTEMS ONLINE" : "ATTENTION: CHECK NETWORK / MEMORY";
         String msg = greeting() + "  ::  " + status + "  ::  DOWNLINK " + s.rxText + "  ::  UPLINK " + s.txText
                 + "  ::  SIGNAL " + (s.signal < 0 ? "--" : s.signal + "%") + "  ::  UPTIME " + s.uptime
+                + (deviceCount < 0 ? "" : "  ::  " + deviceCount + " DEVICES ON NETWORK")
+                + (routerUptime == null ? "" : "  ::  ROUTER UP " + routerUptime)
                 + "  ::  STANDING BY";
         text.setTextSize(16);
         text.setTypeface(mono);

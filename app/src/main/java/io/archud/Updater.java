@@ -10,6 +10,8 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -36,6 +38,7 @@ final class Updater {
             "api.github.com", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"));
     private static final int MAX_API_BYTES = 512 * 1024;
     private static final long MAX_APK_BYTES = 20L * 1024 * 1024;
+    private static final long MAX_ASSET_BYTES = 5L * 1024 * 1024;
     private static final int MAX_REDIRECTS = 5;
 
     static final class Release {
@@ -86,6 +89,49 @@ final class Updater {
             throw new IOException("Could not read the release information", e);
         } finally {
             c.disconnect();
+        }
+    }
+
+    /** Network call: downloads another asset of the latest release (same repo lock) to dest. */
+    static void downloadAsset(String assetName, File dest) throws IOException {
+        String url = null;
+        HttpsURLConnection api = connect(LATEST_API, true);
+        try (InputStream in = api.getInputStream()) {
+            JSONArray assets = new JSONObject(new String(readAll(in, MAX_API_BYTES), StandardCharsets.UTF_8))
+                    .getJSONArray("assets");
+            for (int i = 0; i < assets.length(); i++) {
+                JSONObject a = assets.getJSONObject(i);
+                if (assetName.equals(a.getString("name"))) {
+                    url = a.getString("browser_download_url");
+                }
+            }
+        } catch (JSONException e) {
+            throw new IOException("Could not read the release information", e);
+        } finally {
+            api.disconnect();
+        }
+        if (url == null || !url.startsWith(DOWNLOAD_PREFIX)) {
+            throw new IOException("No " + assetName + " from " + REPO);
+        }
+        File tmp = new File(dest.getPath() + ".part");
+        HttpsURLConnection c = connect(url, false);
+        try (InputStream in = c.getInputStream(); OutputStream out = new FileOutputStream(tmp)) {
+            byte[] buf = new byte[16 * 1024];
+            long total = 0;
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                total += n;
+                if (total > MAX_ASSET_BYTES) {
+                    throw new IOException(assetName + " is larger than allowed");
+                }
+                out.write(buf, 0, n);
+            }
+        } finally {
+            c.disconnect();
+        }
+        if (!tmp.renameTo(dest)) {
+            tmp.delete();
+            throw new IOException("Could not save " + assetName);
         }
     }
 

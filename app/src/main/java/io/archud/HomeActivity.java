@@ -174,6 +174,8 @@ public class HomeActivity extends Activity {
         if (tvSettings.resolveActivity(getPackageManager()) != null) {
             inputsRow.addView(tile(new Item("fixed:tv-settings", "TV SETTINGS", "TV MENU", GOLD, null, tvSettings), 150, 84, false));
         }
+        inputsRow.addView(tile(new Item("fixed:devices", "DEVICES", "ON NETWORK", CYAN, null,
+                new Intent(this, DevicesActivity.class)), 150, 84, false));
         inputsRow.addView(tile(new Item("fixed:arc-settings", "ARC SETTINGS", "THIS APP", GOLD, null,
                 new Intent(this, SettingsActivity.class)), 150, 84, false));
         if (!hiddenInputs.isEmpty()) {

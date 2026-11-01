@@ -61,6 +61,17 @@ MENU on the remote (or the ARC SETTINGS tile) opens the app's own settings: gree
 subtitle, status line, hidden/pinned tiles, Wi-Fi name / MAC display, screensaver, animation speed,
 update download and reset. Everything is stored on the device only.
 
+## Network devices
+
+ARC HOME's DEVICES tile lists what is on the home network: name, IP, MAC, manufacturer, type/model
+and how long it has been online (as seen by this device; other devices do not publish their uptime).
+New devices are flagged. Sources: ping sweep, ARP table, router DNS names, UPnP/SSDP descriptions,
+and the router's uptime / public IP over UPnP where the router offers it. Scans run once a minute
+only while the HUD or the device list is on screen. The scanner can only reach local addresses
+(private / link-local ranges, enforced in code). Manufacturer names come from `oui.tsv.gz`, which CI
+builds from Wireshark's public OUI list and attaches to each release; the device fetches it from this
+repo weekly and looks names up locally.
+
 ## Screensaver setup
 
 On launch the app checks whether it is the screensaver and, if not, asks. Nothing changes unless

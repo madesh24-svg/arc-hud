@@ -2,6 +2,14 @@
 
 Release numbers follow the CI run (`build-N` = version 1.0.N).
 
+## 1.0.10
+- Network devices: DEVICES tile and screen in ARC HOME, device count on the HUD. Scans the local
+  network once a minute while shown (never in the background): ping sweep, ARP table, router DNS
+  names, UPnP/SSDP names and models, router uptime and public IP via UPnP where offered.
+- Manufacturer names from a table CI builds from Wireshark's OUI list and publishes with each release;
+  the device downloads it from this repo weekly, so MAC addresses never leave the network.
+- Network rule: the scanner may only reach local addresses; the internet is only this repo.
+
 ## 1.0.9
 - Changelog added (also the first release delivered through the in-app updater).
 
