@@ -25,3 +25,12 @@ secrets: `ARCHUD_KEYSTORE_B64` (base64 PKCS12 keystore, alias `archud`) and
 ## License
 
 MIT
+
+## Install on a TV (adb)
+
+    adb shell am start -a android.intent.action.VIEW -d https://github.com/madesh24-svg/arc-hud/releases/latest/download/arc-hud.apk
+    # or, after downloading on the TV:
+    adb shell pm install -r /sdcard/Download/arc-hud.apk
+    adb shell pm grant io.archud android.permission.ACCESS_COARSE_LOCATION
+
+Use it as a screensaver: Settings > Device Preferences > Screen saver > ARC HUD (where the firmware exposes it).
