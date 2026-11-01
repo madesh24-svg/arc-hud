@@ -1,16 +1,21 @@
 package io.archud;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
 import android.os.Bundle;
+import android.text.InputType;
+import android.view.KeyEvent;
 import android.view.View;
+import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
@@ -28,6 +33,8 @@ public class DevicesActivity extends Activity implements NetScanner.Listener {
     private NetScanner scanner;
     private LinearLayout list;
     private TextView summary;
+    private List<NetScanner.Device> shown = new ArrayList<>();
+    private boolean dialogOpen;
     private final SimpleDateFormat clock = new SimpleDateFormat("HH:mm:ss", Locale.US);
 
     @Override
@@ -47,8 +54,9 @@ public class DevicesActivity extends Activity implements NetScanner.Listener {
         list.setOrientation(LinearLayout.VERTICAL);
         list.setPadding(0, d(16), 0, 0);
         page.addView(list);
-        page.addView(text("Local network only. Names come from the devices and your router; manufacturer "
-                + "names from this app's release data. Refreshes every minute while open.", 12, DIM, false));
+        page.addView(text("Press OK on a device to name it (stored on this TV). NEW = first seen in the last 24 h "
+                + "and not named yet. ACTIVE answers pings; STANDBY only answers the network check (e.g. a TV on "
+                + "standby). Local network only; refreshes every minute while open.", 12, DIM, false));
         scroll.addView(page);
         setContentView(scroll);
     }
@@ -66,20 +74,42 @@ public class DevicesActivity extends Activity implements NetScanner.Listener {
     }
 
     @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_MENU) {
+            View focused = getCurrentFocus();
+            int i = focused != null ? list.indexOfChild(focused) : -1;
+            if (i >= 0 && i < shown.size()) {
+                rename(shown.get(i));
+                return true;
+            }
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    @Override
     public void onDevices(List<NetScanner.Device> devices) {
+        if (dialogOpen) {
+            return;
+        }
+        shown = devices;
         View focused = getCurrentFocus();
         int focusIndex = focused != null ? list.indexOfChild(focused) : -1;
         long now = System.currentTimeMillis();
         int fresh = 0;
+        int active = 0;
         list.removeAllViews();
         for (NetScanner.Device dev : devices) {
             if (dev.isNew) {
                 fresh++;
             }
+            if (dev.active(now)) {
+                active++;
+            }
             list.addView(row(dev, now));
         }
         StringBuilder s = new StringBuilder();
-        s.append(devices.size()).append(" ONLINE");
+        s.append(devices.size()).append(" ONLINE (").append(active).append(" ACTIVE, ")
+                .append(devices.size() - active).append(" STANDBY)");
         if (fresh > 0) {
             s.append("  ·  ").append(fresh).append(" NEW");
         }
@@ -106,11 +136,15 @@ public class DevicesActivity extends Activity implements NetScanner.Listener {
         r.setFocusable(true);
         r.setBackground(rowBackground());
 
+        boolean active = dev.active(now);
         String title = dev.display() + (dev.self ? "" : (dev.gateway ? "  (ROUTER)" : ""));
         TextView name = text(title + (dev.isNew ? "   ● NEW" : ""), 17, dev.isNew ? GOLD : WHITE, true);
-        StringBuilder meta = new StringBuilder(dev.ip);
+        StringBuilder meta = new StringBuilder(active ? "ACTIVE   " : "STANDBY  ").append(dev.ip);
         if (!dev.mac.isEmpty()) {
             meta.append("   ").append(dev.mac);
+        }
+        if (!dev.custom.isEmpty() && !dev.name.isEmpty()) {
+            meta.append("   ").append(dev.name);
         }
         if (!dev.vendor.isEmpty() && !dev.vendor.equals(dev.display())) {
             meta.append("   ").append(dev.vendor);
@@ -122,18 +156,44 @@ public class DevicesActivity extends Activity implements NetScanner.Listener {
             meta.append("   ").append(dev.model);
         }
         meta.append("   ONLINE ").append(Stats.duration(Math.max(0, now - dev.firstSeen)));
-        TextView info = text(meta.toString(), 13, dev.self ? OK : CYAN, false);
+        int infoColor = dev.self ? OK : (active ? CYAN : DIM);
+        TextView info = text(meta.toString(), 13, infoColor, false);
         r.addView(name);
         r.addView(info);
+        r.setClickable(true);
+        r.setOnClickListener(v -> rename(dev));
         r.setOnFocusChangeListener((v, f) -> {
             name.setTextColor(f ? INK : (dev.isNew ? GOLD : WHITE));
-            info.setTextColor(f ? INK : (dev.self ? OK : CYAN));
+            info.setTextColor(f ? INK : infoColor);
         });
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
         lp.bottomMargin = d(4);
         r.setLayoutParams(lp);
         return r;
+    }
+
+    private void rename(NetScanner.Device dev) {
+        if (dev.mac.isEmpty() || dev.self) {
+            return;
+        }
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS);
+        input.setText(dev.custom);
+        input.setSelectAllOnFocus(true);
+        dialogOpen = true;
+        new AlertDialog.Builder(this)
+                .setTitle("Name for " + dev.ip + "  (" + (dev.vendor.isEmpty() ? dev.mac : dev.vendor) + ")")
+                .setView(input)
+                .setPositiveButton("SAVE", (d, w) -> scanner.setCustomName(dev, input.getText().toString()))
+                .setNeutralButton("CLEAR NAME", (d, w) -> scanner.setCustomName(dev, ""))
+                .setNegativeButton("CANCEL", null)
+                .setOnDismissListener(d -> {
+                    dialogOpen = false;
+                    onDevices(scanner.snapshot());
+                })
+                .show();
     }
 
     private StateListDrawable rowBackground() {

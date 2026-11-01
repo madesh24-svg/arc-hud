@@ -47,8 +47,10 @@ final class NetScanner {
         volatile String vendor = "";
         volatile String kind = "";
         volatile String model = "";
+        volatile String custom = "";
         volatile long firstSeen;
         volatile long lastSeen;
+        volatile long lastActive;
         volatile boolean isNew;
         volatile boolean self;
         volatile boolean gateway;
@@ -57,7 +59,15 @@ final class NetScanner {
             this.ip = ip;
         }
 
+        /** ACTIVE answers pings / UPnP; STANDBY only answers the network (ARP) check, e.g. a TV on standby. */
+        boolean active(long now) {
+            return self || now - lastActive <= ACTIVE_WINDOW_MS;
+        }
+
         String display() {
+            if (!custom.isEmpty()) {
+                return custom;
+            }
             if (!name.isEmpty()) {
                 return name;
             }
@@ -70,8 +80,11 @@ final class NetScanner {
 
     private static final long PERIOD_MS = 60_000;
     private static final long ONLINE_WINDOW_MS = 3 * PERIOD_MS;
+    private static final long ACTIVE_WINDOW_MS = 2 * PERIOD_MS + 30_000;
+    private static final long NEW_FOR_MS = 24L * 3600 * 1000;
     private static final int MAX_HOSTS = 1022;
-    private static final String KNOWN = "known_macs";
+    /** Per-device memory on this TV: first-seen time and user-given name, keyed by MAC. */
+    private static final String DEVICES = "devices";
     private static NetScanner instance;
 
     private final Context ctx;
@@ -180,7 +193,7 @@ final class NetScanner {
         int hosts = Math.min(~mask, MAX_HOSTS);
         String gatewayIp = dh.gateway != 0 ? ipString(Integer.reverseBytes(dh.gateway)) : null;
 
-        Device me = mark(ipString(selfIp), now);
+        Device me = mark(ipString(selfIp), now, true);
         me.self = true;
         me.name = "THIS TV";
         String myMac = Prefs.get(ctx).getString(Prefs.MAC, "");
@@ -188,7 +201,7 @@ final class NetScanner {
             me.mac = myMac.toUpperCase(Locale.US);
         }
         if (gatewayIp != null) {
-            mark(gatewayIp, now).gateway = true;
+            mark(gatewayIp, now, false).gateway = true;
         }
 
         // 1. sweep: replies (and the ARP lookups they trigger) reveal who is there
@@ -202,7 +215,7 @@ final class NetScanner {
                 try {
                     InetAddress a = InetAddress.getByAddress(bytes(addr));
                     if (NetPolicy.isLocal(a) && a.isReachable(500)) {
-                        mark(a.getHostAddress(), System.currentTimeMillis());
+                        mark(a.getHostAddress(), System.currentTimeMillis(), true);
                     }
                 } catch (Exception ignored) {
                     // unreachable host
@@ -228,7 +241,7 @@ final class NetScanner {
         markNew();
     }
 
-    private Device mark(String ip, long now) {
+    private Device mark(String ip, long now, boolean active) {
         Device d = byIp.get(ip);
         if (d == null) {
             d = new Device(ip);
@@ -241,6 +254,9 @@ final class NetScanner {
             d.firstSeen = now;
         }
         d.lastSeen = now;
+        if (active) {
+            d.lastActive = now;
+        }
         return d;
     }
 
@@ -256,7 +272,7 @@ final class NetScanner {
                 if (!NetPolicy.isLocal(a)) {
                     continue;
                 }
-                mark(p[0], now).mac = p[3].toUpperCase(Locale.US);
+                mark(p[0], now, false).mac = p[3].toUpperCase(Locale.US);
             }
         } catch (Exception ignored) {
             // some devices hide the ARP table from apps; the sweep results remain
@@ -288,7 +304,7 @@ final class NetScanner {
                     continue;
                 }
                 String from = reply.getAddress().getHostAddress();
-                mark(from, now);
+                mark(from, now, true);
                 String loc = header(new String(buf, 0, reply.getLength(), StandardCharsets.US_ASCII), "LOCATION");
                 if (loc != null) {
                     Set<String> set = locations.get(from);
@@ -433,20 +449,55 @@ final class NetScanner {
         }
     }
 
+    /**
+     * NEW = first seen within the last 24 hours and not yet named by the user. Devices present on the
+     * very first scan form the baseline and are never NEW. Naming a device marks it as known.
+     */
     private void markNew() {
-        SharedPreferences prefs = Prefs.get(ctx);
-        Set<String> known = new HashSet<>(prefs.getStringSet(KNOWN, new HashSet<String>()));
-        boolean firstEver = known.isEmpty();
+        SharedPreferences dp = ctx.getSharedPreferences(DEVICES, Context.MODE_PRIVATE);
+        boolean baseline = !dp.getBoolean("baseline", false);
+        long now = System.currentTimeMillis();
+        SharedPreferences.Editor e = dp.edit();
         for (Device d : byIp.values()) {
             if (d.mac.isEmpty()) {
                 continue;
             }
-            if (!known.contains(d.mac)) {
-                d.isNew = !firstEver;
-                known.add(d.mac);
+            String k = key(d.mac);
+            long first = dp.getLong("first_" + k, 0);
+            if (first == 0) {
+                first = baseline ? 1 : now;
+                e.putLong("first_" + k, first);
             }
+            d.custom = dp.getString("name_" + k, "");
+            d.isNew = first > 1 && now - first < NEW_FOR_MS && d.custom.isEmpty();
         }
-        prefs.edit().putStringSet(KNOWN, known).apply();
+        if (baseline) {
+            e.putBoolean("baseline", true);
+        }
+        e.apply();
+    }
+
+    /** Stores (or clears, when empty) the user's name for a device; applies to the current list at once. */
+    void setCustomName(Device d, String name) {
+        if (d.mac.isEmpty()) {
+            return;
+        }
+        String clean = name == null ? "" : name.trim();
+        SharedPreferences.Editor e = ctx.getSharedPreferences(DEVICES, Context.MODE_PRIVATE).edit();
+        if (clean.isEmpty()) {
+            e.remove("name_" + key(d.mac));
+        } else {
+            e.putString("name_" + key(d.mac), clean);
+        }
+        e.apply();
+        d.custom = clean;
+        if (!clean.isEmpty()) {
+            d.isNew = false;
+        }
+    }
+
+    private static String key(String mac) {
+        return mac.replace(":", "").replace("-", "").toUpperCase(Locale.US);
     }
 
     // ---------------------------------------------------------------- helpers

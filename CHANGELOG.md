@@ -2,6 +2,11 @@
 
 Release numbers follow the CI run (`build-N` = version 1.0.N).
 
+## 1.0.13
+- Name devices: OK (or MENU) on a device in NETWORK DEVICES; names are kept on the TV, keyed by MAC.
+- ACTIVE / STANDBY per device: ACTIVE answers pings or UPnP, STANDBY only answers the network check.
+- NEW = first seen in the last 24 hours and not named yet; devices from the first scan are the baseline.
+
 ## 1.0.12
 - After an in-app update the home screen reopens by itself and shows "ARC HUD updated to 1.0.x"
   (Android closes an app while updating it, which looked like nothing happened).
