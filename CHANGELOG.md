@@ -2,6 +2,10 @@
 
 Release numbers follow the CI run (`build-N` = version 1.0.N).
 
+## 1.0.14
+- Kotlin enabled alongside Java (Kotlin 2.0.21). New code is Kotlin; files move over when touched.
+  First Kotlin file: UpdatedReceiver. Release builds are now shrunk with R8.
+
 ## 1.0.13
 - Name devices: OK (or MENU) on a device in NETWORK DEVICES; names are kept on the TV, keyed by MAC.
 - ACTIVE / STANDBY per device: ACTIVE answers pings or UPnP, STANDBY only answers the network check.

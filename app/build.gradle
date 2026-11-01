@@ -1,5 +1,7 @@
 plugins {
     id 'com.android.application'
+    // Kotlin is added alongside Java: new code is written in Kotlin, existing files move over when touched.
+    id 'org.jetbrains.kotlin.android'
 }
 
 def runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1") as int
@@ -30,7 +32,9 @@ android {
 
     buildTypes {
         release {
-            minifyEnabled false
+            // R8 removes unused code (mainly from the Kotlin standard library) to keep the APK small.
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
             signingConfig signingConfigs.shared
         }
     }
@@ -38,6 +42,10 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
     }
 
     lint {
