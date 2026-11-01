@@ -25,8 +25,6 @@ import java.util.Locale;
 public class HudView extends View {
     private static final float DW = 1280f;
     private static final float DH = 720f;
-    private static final float CX = 640f;
-    private static final float CY = 290f;
     private static final int CYAN = 0xFF50DCFF;
     private static final int GOLD = 0xFFFFB93C;
     private static final int OK = 0xFF78FFAA;
@@ -36,6 +34,7 @@ public class HudView extends View {
     private static final int BAR_OFF = 0xFF14323F;
     private static final int WHITE = 0xFFEBFAFF;
     private static final long FRAME_MS = 50;
+    private static final long HOME_FRAME_MS = 80;
     private static final long POLL_MS = 2000;
 
     private interface RingPainter {
@@ -56,6 +55,10 @@ public class HudView extends View {
     private final String title;
     private final String subtitle;
     private final String salutation;
+    private final boolean home;
+    private final float centerX;
+    private final float centerY;
+    private final long frameMs;
 
     private Bitmap background;
     private Bitmap ringOuter;
@@ -74,7 +77,7 @@ public class HudView extends View {
                 return;
             }
             invalidate();
-            handler.postDelayed(this, FRAME_MS);
+            handler.postDelayed(this, frameMs);
         }
     };
 
@@ -90,7 +93,16 @@ public class HudView extends View {
     };
 
     public HudView(Context context) {
+        this(context, false);
+    }
+
+    /** home = launcher background: rings on the right, header top-left, no side panels. */
+    public HudView(Context context, boolean home) {
         super(context);
+        this.home = home;
+        centerX = home ? 930f : 640f;
+        centerY = home ? 360f : 290f;
+        frameMs = home ? HOME_FRAME_MS : FRAME_MS;
         SharedPreferences prefs = context.getSharedPreferences(HudActivity.PREFS, Context.MODE_PRIVATE);
         title = prefs.getString("title", "A.R.C.  H.U.D.");
         subtitle = prefs.getString("subtitle", "ADAPTIVE RESPONSE CONSOLE");
@@ -141,17 +153,21 @@ public class HudView extends View {
         c.drawRect(0, 0, w, h, p);
         c.translate(offX, offY);
         c.scale(scale, scale);
-        p.setShader(new RadialGradient(CX, CY, 620, 0x9900648C, 0x0000648C, Shader.TileMode.CLAMP));
+        p.setShader(new RadialGradient(centerX, centerY, 620, 0x9900648C, 0x0000648C, Shader.TileMode.CLAMP));
         c.drawRect(0, 0, DW, DH, p);
         p.setShader(null);
         c.save();
-        c.translate(CX, CY);
+        c.translate(centerX, centerY);
         paintInner(c, p, true);
         paintInner(c, p, false);
         c.restore();
-        p.setShader(new RadialGradient(CX, DH / 2f, 820, new int[] {0x00000000, 0x00000000, 0xB0000000},
+        p.setShader(new RadialGradient(centerX, DH / 2f, 820, new int[] {0x00000000, 0x00000000, 0xB0000000},
                 new float[] {0f, 0.55f, 1f}, Shader.TileMode.CLAMP));
         c.drawRect(0, 0, DW, DH, p);
+        if (home) {
+            p.setShader(new LinearGradient(0, 0, 780, 0, 0xC0010610, 0x00010610, Shader.TileMode.CLAMP));
+            c.drawRect(0, 0, DW, DH, p);
+        }
         return b;
     }
 
@@ -238,8 +254,8 @@ public class HudView extends View {
         }
         canvas.drawBitmap(background, 0, 0, null);
         float t = (SystemClock.uptimeMillis() - start) / 1000f;
-        float cx = offX + CX * scale;
-        float cy = offY + CY * scale;
+        float cx = offX + centerX * scale;
+        float cy = offY + centerY * scale;
         spin(canvas, ringOuter, cx, cy, t * 4f);
         spin(canvas, ringMid, cx, cy, -t * 9f);
         spin(canvas, ringGold, cx, cy, t * 2.5f);
@@ -248,10 +264,15 @@ public class HudView extends View {
         canvas.translate(offX, offY);
         canvas.scale(scale, scale);
         drawCore(canvas, t);
-        drawPanels(canvas);
-        drawTitle(canvas);
-        drawClock(canvas);
-        drawTicker(canvas, t);
+        if (home) {
+            drawHomeHeader(canvas);
+            drawClock(canvas);
+        } else {
+            drawPanels(canvas);
+            drawTitle(canvas);
+            drawClock(canvas);
+            drawTicker(canvas, t);
+        }
         canvas.restore();
     }
 
@@ -265,7 +286,7 @@ public class HudView extends View {
     private void drawCore(Canvas c, float t) {
         float pulse = 0.72f + 0.28f * (float) Math.sin(t * 2.2);
         c.save();
-        c.translate(CX, CY);
+        c.translate(centerX, centerY);
         paint.setStyle(Paint.Style.FILL);
         paint.setMaskFilter(null);
         paint.setShader(coreShader);
@@ -372,8 +393,21 @@ public class HudView extends View {
     }
 
     private void drawTitle(Canvas c) {
-        label(c, title, CX, 600, WHITE, 58, condensed, Paint.Align.CENTER);
-        label(c, subtitle, CX, 628, CYAN, 18, Typeface.SANS_SERIF, Paint.Align.CENTER);
+        label(c, title, centerX, 600, WHITE, 58, condensed, Paint.Align.CENTER);
+        label(c, subtitle, centerX, 628, CYAN, 18, Typeface.SANS_SERIF, Paint.Align.CENTER);
+    }
+
+    private void drawHomeHeader(Canvas c) {
+        Stats s = stats;
+        label(c, title, 40, 84, WHITE, 54, condensed, Paint.Align.LEFT);
+        label(c, subtitle, 42, 108, CYAN, 16, Typeface.SANS_SERIF, Paint.Align.LEFT);
+        paint.setStyle(Paint.Style.STROKE);
+        paint.setStrokeWidth(3f);
+        paint.setColor(GOLD);
+        c.drawLine(40, 122, 330, 122, paint);
+        String line = "IP " + s.ip + "   WI-FI " + (s.signal < 0 ? "--" : s.signal + "%")
+                + "   RAM " + s.ramText + "   DOWN " + s.rxText;
+        label(c, line, 42, 146, s.healthy ? OK : WARN, 14, mono, Paint.Align.LEFT);
     }
 
     private void drawClock(Canvas c) {

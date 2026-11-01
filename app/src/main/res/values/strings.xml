@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">ARC HUD</string>
+    <string name="home_name">ARC HOME</string>
 </resources>

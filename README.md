@@ -38,6 +38,12 @@ MIT
     adb shell pm install -r /sdcard/Download/arc-hud.apk
     adb shell pm grant io.archud android.permission.ACCESS_COARSE_LOCATION
 
+## ARC HOME (launcher, preview)
+
+A second entry, ARC HOME, is a TV home screen: the live HUD as background with an Inputs row
+(HDMI and other passthrough inputs from the TV input list, plus Settings) and an Apps row.
+Phase 1 opens like a normal app; it is not registered as the system Home yet.
+
 ## Screensaver setup
 
 On launch the app checks whether it is the screensaver and, if not, asks. Nothing changes unless

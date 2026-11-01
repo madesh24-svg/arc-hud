@@ -33,6 +33,21 @@
             </intent-filter>
         </activity>
 
+        <!-- Launcher home (phase 1: opened like an app; not registered as HOME yet). -->
+        <activity
+            android:name=".HomeActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="true"
+            android:label="@string/home_name"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+        </activity>
+
         <service
             android:name=".HudDream"
             android:exported="true"
