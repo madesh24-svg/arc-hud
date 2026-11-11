@@ -9,6 +9,7 @@ import android.media.MediaPlayer;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.Surface;
@@ -62,6 +63,11 @@ public class PlayerActivity extends Activity {
     private int generation;
     private File file;
     private Intent pending;
+    private RangeSource rangeSource;
+    /** Remote video only: true while paused to fill the buffer (first start, or after it ran dry). */
+    private boolean waiting;
+    private boolean starting;
+    private long waitSince;
 
     private final Runnable hideOverlay = new Runnable() {
         @Override
@@ -74,6 +80,7 @@ public class PlayerActivity extends Activity {
         @Override
         public void run() {
             refresh();
+            bufferTick();
             handler.postDelayed(this, 500);
         }
     };
@@ -187,8 +194,17 @@ public class PlayerActivity extends Activity {
         mp.setSurface(output);
         mp.setOnPreparedListener(p -> {
             prepared = true;
-            p.start();
-            showOverlay();
+            if (rangeSource == null) {
+                p.start();
+                showOverlay();
+            } else {
+                // video on the phone: bufferTick starts it once 20-30 s are buffered
+                waiting = true;
+                starting = true;
+                waitSince = SystemClock.elapsedRealtime();
+                message.setText("Buffering...");
+                message.setVisibility(View.VISIBLE);
+            }
         });
         mp.setOnVideoSizeChangedListener((p, w, h) -> fit(w, h));
         mp.setOnCompletionListener(p -> finish());
@@ -224,13 +240,15 @@ public class PlayerActivity extends Activity {
             message.setVisibility(View.VISIBLE);
             new Thread(() -> {
                 try {
-                    final RangeSource source = new RangeSource(host, port, remotePath, token);
+                    final RangeSource source = new RangeSource(host, port, remotePath, token,
+                            new File(getCacheDir(), "arcbuf"));
                     runOnUiThread(() -> {
                         if (mine != generation || player != mp) {
                             source.close();
                             return;
                         }
                         message.setVisibility(View.GONE);
+                        rangeSource = source;
                         try {
                             mp.setDataSource(source);
                             mp.prepareAsync();
@@ -255,8 +273,60 @@ public class PlayerActivity extends Activity {
         handler.post(ticker);
     }
 
+    /** Start or continue playing now (the user asked), ending any buffering wait. */
+    private void resume() {
+        waiting = false;
+        starting = false;
+        message.setVisibility(View.GONE);
+        player.start();
+    }
+
+    /** Remote video: begin once 20-30 s are buffered, pause when the buffer runs dry, resume at about 10 s. */
+    private void bufferTick() {
+        RangeSource src = rangeSource;
+        MediaPlayer mp = player;
+        if (src == null || mp == null || !prepared || failed) {
+            return;
+        }
+        int durationMs = mp.getDuration();
+        long size = src.getSize();
+        long perSec = durationMs > 0 && size > 0 ? Math.max(1, size * 1000L / durationMs) : 600_000L;
+        long startBytes = clamp(perSec * 25, 4L << 20, 28L << 20);
+        long resumeBytes = clamp(perSec * 10, 2L << 20, 12L << 20);
+        long lowBytes = Math.max(512L << 10, perSec * 2);
+        long ahead = src.ahead();
+        boolean rest = src.restBuffered();
+        long now = SystemClock.elapsedRealtime();
+        if (waiting) {
+            long need = starting ? startBytes : resumeBytes;
+            if (ahead >= need || rest || now - waitSince > 30_000) {
+                waiting = false;
+                starting = false;
+                message.setVisibility(View.GONE);
+                mp.start();
+                showOverlay();
+            } else {
+                message.setText("Buffering...  " + Math.min(99, 100 * ahead / need) + "%");
+                message.setVisibility(View.VISIBLE);
+            }
+        } else if (mp.isPlaying() && ahead < lowBytes && !rest) {
+            mp.pause();
+            waiting = true;
+            waitSince = now;
+        }
+    }
+
+    private static long clamp(long v, long lo, long hi) {
+        return Math.max(lo, Math.min(hi, v));
+    }
+
     private void releasePlayer() {
         prepared = false;
+        waiting = false;
+        if (rangeSource != null) {
+            rangeSource.close();
+            rangeSource = null;
+        }
         if (player != null) {
             try {
                 player.release();
@@ -310,12 +380,12 @@ public class PlayerActivity extends Activity {
                 if (player.isPlaying()) {
                     player.pause();
                 } else {
-                    player.start();
+                    resume();
                 }
                 showOverlay();
                 return true;
             case KeyEvent.KEYCODE_MEDIA_PLAY:
-                player.start();
+                resume();
                 showOverlay();
                 return true;
             case KeyEvent.KEYCODE_MEDIA_PAUSE:

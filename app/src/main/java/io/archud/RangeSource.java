@@ -4,34 +4,58 @@ import android.media.MediaDataSource;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.RandomAccessFile;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
+import java.util.Iterator;
 import java.util.Locale;
 
 /**
- * Lets the player read a video that stays on a phone: it asks the phone's file server for byte ranges
- * (HTTP Range) and keeps one 1 MB block in memory, so nothing is stored on the TV and seeking works.
- * Plain sockets to local-network addresses only (see NetPolicy); no internet, no cleartext HTTP stack.
+ * Lets the player read a video that stays on a phone. A background thread reads 1 MB blocks over
+ * HTTP Range (plain sockets, local-network addresses only, see NetPolicy) well ahead of the player and
+ * keeps them as small temporary files in the app's private cache (the TV's Java heap is only 48 MB),
+ * so playback can begin after the first 20-30 seconds are buffered, keeps going through short Wi-Fi
+ * hiccups, and seeking works. Blocks far behind the player are deleted; everything is removed on close.
  */
 final class RangeSource extends MediaDataSource {
     private static final int BLOCK = 1 << 20;
+    /** Blocks kept ready in front of the read position (about 30-50 s of a typical phone video). */
+    private static final int AHEAD = 32;
+    private static final int BEHIND = 4;
+    private static final long WAIT_LIMIT_MS = 20_000;
+
+    private static final class Blk {
+        final File file;
+        final int len;
+
+        Blk(File file, int len) {
+            this.file = file;
+            this.len = len;
+        }
+    }
 
     private final InetAddress addr;
     private final int port;
     private final String path;
     private final String token;
-    private final byte[] block = new byte[BLOCK];
-    private long blockStart = -1;
-    private int blockLen;
+    private final File dir;
+    private final Object lock = new Object();
+    private final HashMap<Long, Blk> cache = new HashMap<>();
     private volatile long total = -1;
     private volatile boolean closed;
+    private long lastRead;
+    private long wanted = -1;
+    private IOException failure;
 
     /** Connects once to learn the file size; throws if the phone cannot be reached or refuses. */
-    RangeSource(String host, int port, String path, String token) throws IOException {
+    RangeSource(String host, int port, String path, String token, File cacheDir) throws IOException {
         this.addr = InetAddress.getByName(host);
         if (!NetPolicy.isLocal(addr)) {
             throw new IOException("Only local addresses are allowed");
@@ -39,31 +63,57 @@ final class RangeSource extends MediaDataSource {
         this.port = port;
         this.path = path;
         this.token = token;
+        this.dir = cacheDir;
+        if (!dir.isDirectory() && !dir.mkdirs()) {
+            throw new IOException("No room to buffer");
+        }
+        clearDir();
         if (fetch(0, new byte[1], 1) < 1 || total <= 0) {
             throw new IOException("The phone did not send the file size");
         }
+        Thread t = new Thread(this::fetchLoop, "arc-range");
+        t.setDaemon(true);
+        t.start();
     }
 
+    // ---------------------------------------------------------------- MediaDataSource
+
     @Override
-    public synchronized int readAt(long position, byte[] buffer, int offset, int size) throws IOException {
-        if (closed || size <= 0) {
-            return closed ? -1 : 0;
-        }
-        if (total >= 0 && position >= total) {
+    public int readAt(long position, byte[] buffer, int offset, int size) throws IOException {
+        if (closed) {
             return -1;
         }
-        if (blockStart < 0 || position < blockStart || position >= blockStart + blockLen) {
-            blockStart = -1;
-            int got = fetch(position, block, BLOCK);
-            if (got <= 0) {
-                return -1;
-            }
-            blockStart = position;
-            blockLen = got;
+        if (size <= 0) {
+            return 0;
         }
-        int n = Math.min(size, (int) (blockStart + blockLen - position));
-        System.arraycopy(block, (int) (position - blockStart), buffer, offset, n);
-        return n;
+        long t = total;
+        if (t >= 0 && position >= t) {
+            return -1;
+        }
+        int done = 0;
+        while (done < size) {
+            long pos = position + done;
+            if (t >= 0 && pos >= t) {
+                break;
+            }
+            long idx = pos / BLOCK;
+            Blk b = obtain(idx, pos);
+            int within = (int) (pos - idx * BLOCK);
+            if (b == null || within >= b.len) {
+                break;
+            }
+            int n = Math.min(size - done, b.len - within);
+            try (RandomAccessFile raf = new RandomAccessFile(b.file, "r")) {
+                raf.seek(within);
+                raf.readFully(buffer, offset + done, n);
+            }
+            done += n;
+        }
+        synchronized (lock) {
+            lastRead = position + done;
+            lock.notifyAll();
+        }
+        return done == 0 ? -1 : done;
     }
 
     @Override
@@ -73,8 +123,180 @@ final class RangeSource extends MediaDataSource {
 
     @Override
     public void close() {
-        closed = true;
+        synchronized (lock) {
+            closed = true;
+            lock.notifyAll();
+        }
+        clearDir();
     }
+
+    // ---------------------------------------------------------------- buffer status for the player
+
+    /** Bytes ready in a row in front of the read position. */
+    long ahead() {
+        synchronized (lock) {
+            return aheadLocked();
+        }
+    }
+
+    /** True when everything from the read position to the end of the file is already buffered. */
+    boolean restBuffered() {
+        synchronized (lock) {
+            long t = total;
+            return t >= 0 && t - lastRead <= aheadLocked();
+        }
+    }
+
+    private long aheadLocked() {
+        long end = lastRead;
+        long idx = lastRead / BLOCK;
+        while (true) {
+            Blk b = cache.get(idx);
+            if (b == null) {
+                break;
+            }
+            end = idx * BLOCK + b.len;
+            if (b.len < BLOCK) {
+                break;
+            }
+            idx++;
+        }
+        return Math.max(0, end - lastRead);
+    }
+
+    // ---------------------------------------------------------------- reading ahead
+
+    /** Waits for the block holding pos, asking the fetch thread to get it first. */
+    private Blk obtain(long idx, long pos) throws IOException {
+        long deadline = System.currentTimeMillis() + WAIT_LIMIT_MS;
+        synchronized (lock) {
+            while (true) {
+                if (closed) {
+                    return null;
+                }
+                Blk b = cache.get(idx);
+                if (b != null) {
+                    return b;
+                }
+                if (failure != null) {
+                    throw new IOException(failure.getMessage());
+                }
+                wanted = idx;
+                lastRead = pos;
+                lock.notifyAll();
+                long left = deadline - System.currentTimeMillis();
+                if (left <= 0) {
+                    throw new IOException("The phone is too slow or went away");
+                }
+                try {
+                    lock.wait(Math.min(left, 500));
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new IOException("interrupted");
+                }
+            }
+        }
+    }
+
+    /** The block to fetch next (the one the player is waiting for, else the next missing one ahead). */
+    private long next() {
+        if (wanted >= 0 && !cache.containsKey(wanted)) {
+            return wanted;
+        }
+        long base = lastRead / BLOCK;
+        long t = total;
+        for (long i = base; i <= base + AHEAD; i++) {
+            if (t >= 0 && i * BLOCK >= t) {
+                break;
+            }
+            if (!cache.containsKey(i)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private void trim() {
+        long base = lastRead / BLOCK;
+        Iterator<java.util.Map.Entry<Long, Blk>> it = cache.entrySet().iterator();
+        while (it.hasNext()) {
+            java.util.Map.Entry<Long, Blk> e = it.next();
+            long k = e.getKey();
+            if (k < base - BEHIND || k > base + AHEAD + 2) {
+                e.getValue().file.delete();
+                it.remove();
+            }
+        }
+    }
+
+    private void fetchLoop() {
+        byte[] data = new byte[BLOCK];
+        while (!closed) {
+            long idx;
+            synchronized (lock) {
+                idx = next();
+                while (idx < 0 && !closed) {
+                    try {
+                        lock.wait();
+                    } catch (InterruptedException e) {
+                        return;
+                    }
+                    idx = next();
+                }
+            }
+            if (closed) {
+                return;
+            }
+            Blk blk = null;
+            IOException error = null;
+            for (int attempt = 0; attempt < 3 && !closed && blk == null; attempt++) {
+                try {
+                    int got = Math.max(fetch(idx * BLOCK, data, BLOCK), 0);
+                    File f = new File(dir, "b" + idx);
+                    try (FileOutputStream out = new FileOutputStream(f)) {
+                        out.write(data, 0, got);
+                    }
+                    blk = new Blk(f, got);
+                } catch (IOException e) {
+                    error = e;
+                    try {
+                        Thread.sleep(500);
+                    } catch (InterruptedException ie) {
+                        return;
+                    }
+                }
+            }
+            synchronized (lock) {
+                if (blk != null) {
+                    if (closed) {
+                        blk.file.delete();
+                    } else {
+                        cache.put(idx, blk);
+                        trim();
+                    }
+                } else if (!closed) {
+                    failure = error;
+                }
+                lock.notifyAll();
+            }
+        }
+    }
+
+    private void clearDir() {
+        File[] files = dir.listFiles();
+        if (files != null) {
+            for (File f : files) {
+                if (f.getName().startsWith("b")) {
+                    f.delete();
+                }
+            }
+        }
+        synchronized (lock) {
+            cache.clear();
+        }
+    }
+
+    // ---------------------------------------------------------------- one ranged HTTP request
 
     /** One ranged GET; returns the bytes read (0 or -1 past the end) and learns the total size. */
     private int fetch(long start, byte[] out, int len) throws IOException {
