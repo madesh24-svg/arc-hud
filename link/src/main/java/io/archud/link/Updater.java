@@ -113,7 +113,8 @@ final class Updater {
                 session.fsync(out);
             }
             Intent result = new Intent(ctx, InstallReceiver.class);
-            PendingIntent pending = PendingIntent.getBroadcast(ctx, id, result, PendingIntent.FLAG_UPDATE_CURRENT);
+            PendingIntent pending = PendingIntent.getBroadcast(ctx, id, result,
+                    PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
             session.commit(pending.getIntentSender());
         } catch (IOException | RuntimeException e) {
             pi.abandonSession(id);
