@@ -27,7 +27,10 @@ import java.util.Locale;
 final class RangeSource extends MediaDataSource {
     private static final int BLOCK = 1 << 20;
     /** Blocks kept ready in front of the read position (about 30-50 s of a typical phone video). */
-    private static final int AHEAD = 32;
+    private static final int AHEAD = 40;
+    /** Blocks fetched at the same time: several connections beat one over a busy Wi-Fi link. */
+    private static final int FETCHERS = 3;
+    private static final long RATE_WINDOW_MS = 8000;
     private static final int BEHIND = 4;
     private static final long WAIT_LIMIT_MS = 20_000;
 
@@ -48,6 +51,8 @@ final class RangeSource extends MediaDataSource {
     private final File dir;
     private final Object lock = new Object();
     private final HashMap<Long, Blk> cache = new HashMap<>();
+    private final java.util.HashSet<Long> inFlight = new java.util.HashSet<>();
+    private final java.util.ArrayDeque<long[]> samples = new java.util.ArrayDeque<>();
     private volatile long total = -1;
     private volatile boolean closed;
     private long lastRead;
@@ -71,9 +76,11 @@ final class RangeSource extends MediaDataSource {
         if (fetch(0, new byte[1], 1) < 1 || total <= 0) {
             throw new IOException("The phone did not send the file size");
         }
-        Thread t = new Thread(this::fetchLoop, "arc-range");
-        t.setDaemon(true);
-        t.start();
+        for (int i = 0; i < FETCHERS; i++) {
+            Thread t = new Thread(this::fetchLoop, "arc-range-" + i);
+            t.setDaemon(true);
+            t.start();
+        }
     }
 
     // ---------------------------------------------------------------- MediaDataSource
@@ -200,7 +207,7 @@ final class RangeSource extends MediaDataSource {
 
     /** The block to fetch next (the one the player is waiting for, else the next missing one ahead). */
     private long next() {
-        if (wanted >= 0 && !cache.containsKey(wanted)) {
+        if (wanted >= 0 && !cache.containsKey(wanted) && !inFlight.contains(wanted)) {
             return wanted;
         }
         long base = lastRead / BLOCK;
@@ -209,7 +216,7 @@ final class RangeSource extends MediaDataSource {
             if (t >= 0 && i * BLOCK >= t) {
                 break;
             }
-            if (!cache.containsKey(i)) {
+            if (!cache.containsKey(i) && !inFlight.contains(i)) {
                 return i;
             }
         }
@@ -243,6 +250,9 @@ final class RangeSource extends MediaDataSource {
                     }
                     idx = next();
                 }
+                if (!closed) {
+                    inFlight.add(idx);
+                }
             }
             if (closed) {
                 return;
@@ -267,11 +277,13 @@ final class RangeSource extends MediaDataSource {
                 }
             }
             synchronized (lock) {
+                inFlight.remove(idx);
                 if (blk != null) {
                     if (closed) {
                         blk.file.delete();
                     } else {
                         cache.put(idx, blk);
+                        samples.add(new long[] {System.currentTimeMillis(), blk.len});
                         trim();
                     }
                 } else if (!closed) {
@@ -279,6 +291,25 @@ final class RangeSource extends MediaDataSource {
                 }
                 lock.notifyAll();
             }
+        }
+    }
+
+    /** Bytes per second received over the last few seconds (0 until there is data). */
+    long rate() {
+        synchronized (lock) {
+            long now = System.currentTimeMillis();
+            while (!samples.isEmpty() && now - samples.peekFirst()[0] > RATE_WINDOW_MS) {
+                samples.removeFirst();
+            }
+            if (samples.isEmpty()) {
+                return 0;
+            }
+            long sum = 0;
+            for (long[] s : samples) {
+                sum += s[1];
+            }
+            long span = Math.max(1000, now - samples.peekFirst()[0]);
+            return sum * 1000 / span;
         }
     }
 

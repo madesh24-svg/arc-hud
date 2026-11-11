@@ -306,7 +306,8 @@ public class PlayerActivity extends Activity {
                 mp.start();
                 showOverlay();
             } else {
-                message.setText("Buffering...  " + Math.min(99, 100 * ahead / need) + "%");
+                message.setText("Buffering...  " + Math.min(99, 100 * ahead / need) + "%\nWi-Fi "
+                        + mbps(src.rate()) + " MB/s, this video needs " + mbps(perSec) + " MB/s");
                 message.setVisibility(View.VISIBLE);
             }
         } else if (mp.isPlaying() && ahead < lowBytes && !rest) {
@@ -314,6 +315,10 @@ public class PlayerActivity extends Activity {
             waiting = true;
             waitSince = now;
         }
+    }
+
+    private static String mbps(long bytesPerSecond) {
+        return String.format(Locale.US, "%.1f", bytesPerSecond / 1048576.0);
     }
 
     private static long clamp(long v, long lo, long hi) {
