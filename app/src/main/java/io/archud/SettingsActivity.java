@@ -129,7 +129,7 @@ public class SettingsActivity extends Activity {
         });
         if (link) {
             String addr = LinkServer.address();
-            row("Open this on your phone", addr == null ? "NO WI-FI" : addr.replace("http://", ""), null);
+            row("Type this EXACTLY on your phone", addr == null ? "NO WI-FI" : addr, null);
             row("PIN (press OK for a new one)", LinkServer.pin(this), () -> confirm("Make a new PIN?", () -> {
                 LinkServer.newPin(this);
                 rebuild();
