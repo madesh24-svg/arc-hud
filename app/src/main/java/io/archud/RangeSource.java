@@ -6,6 +6,7 @@ import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.RandomAccessFile;
@@ -49,6 +50,10 @@ final class RangeSource extends MediaDataSource {
     private static final class Blk {
         final File file;
         final int len;
+        /** Readers using this block right now; its file is only deleted when this is 0 (guarded by lock). */
+        int pins;
+        /** Taken out of the buffer; the file goes as soon as the last reader is done. */
+        boolean dead;
 
         Blk(File file, int len) {
             this.file = file;
@@ -73,6 +78,8 @@ final class RangeSource extends MediaDataSource {
     private final HashSet<Long> inFlight = new HashSet<>();
     private final List<Cursor> cursors = new ArrayList<>();
     private final ArrayDeque<long[]> samples = new ArrayDeque<>();
+    private final java.util.concurrent.atomic.AtomicLong fileSeq = new java.util.concurrent.atomic.AtomicLong();
+    private final File logFile;
     private volatile long total = -1;
     private volatile boolean closed;
     private IOException failure;
@@ -86,11 +93,17 @@ final class RangeSource extends MediaDataSource {
         this.port = port;
         this.path = path;
         this.token = token;
-        this.dir = cacheDir;
-        if (!dir.isDirectory() && !dir.mkdirs()) {
+        // Small event log for diagnosing stalls (app cache folder, capped); read it with root or run-as.
+        this.logFile = new File(cacheDir.getParentFile(), "arcrange.log");
+        if (logFile.length() > 64 * 1024) {
+            logFile.delete();
+        }
+        // One folder per video: a late write from an earlier video can never land in this one.
+        deleteTree(cacheDir);
+        this.dir = new File(cacheDir, "s" + System.nanoTime());
+        if (!dir.mkdirs()) {
             throw new IOException("No room to buffer");
         }
-        clearDir();
         if (fetch(0, new byte[1], 1) < 1 || total <= 0) {
             throw new IOException("The phone did not send the file size");
         }
@@ -123,14 +136,23 @@ final class RangeSource extends MediaDataSource {
             }
             long idx = pos / BLOCK;
             Blk b = obtain(idx, pos);
+            if (b == null) {
+                break;
+            }
             int within = (int) (pos - idx * BLOCK);
-            if (b == null || within >= b.len) {
+            if (within >= b.len) {
+                release(b);
                 break;
             }
             int n = Math.min(size - done, b.len - within);
             try (RandomAccessFile raf = new RandomAccessFile(b.file, "r")) {
                 raf.seek(within);
                 raf.readFully(buffer, offset + done, n);
+            } catch (IOException e) {
+                note("read of " + b.file.getName() + " failed: " + e);
+                throw e;
+            } finally {
+                release(b);
             }
             done += n;
         }
@@ -262,6 +284,7 @@ final class RangeSource extends MediaDataSource {
             best = new Cursor();
             best.pos = pos;
             cursors.add(best);
+            note("new read position at block " + pos / BLOCK + " (now " + cursors.size() + ")");
             if (cursors.size() > MAX_CURSORS) {
                 Cursor oldest = cursors.get(0);
                 for (Cursor c : cursors) {
@@ -290,6 +313,9 @@ final class RangeSource extends MediaDataSource {
                 }
                 Blk b = cache.get(idx);
                 if (b != null) {
+                    b.pins++;
+                    Cursor own = cursorFor(pos);
+                    own.wanted = -1;
                     return b;
                 }
                 if (failure != null) {
@@ -300,6 +326,7 @@ final class RangeSource extends MediaDataSource {
                 lock.notifyAll();
                 long left = deadline - System.currentTimeMillis();
                 if (left <= 0) {
+                    note("gave up waiting for block " + idx + " (cursors " + cursors.size() + ")");
                     throw new IOException("The phone is too slow or went away");
                 }
                 try {
@@ -367,9 +394,28 @@ final class RangeSource extends MediaDataSource {
                 }
             }
             if (!keep) {
-                e.getValue().file.delete();
+                drop(e.getValue());
                 it.remove();
             }
+        }
+    }
+
+    /** A reader is done with a block; delete its file now if it was dropped meanwhile. */
+    private void release(Blk b) {
+        synchronized (lock) {
+            b.pins--;
+            if (b.dead && b.pins <= 0) {
+                b.file.delete();
+            }
+        }
+    }
+
+    /** Take a block out of use (lock held): delete the file unless a reader still has it open. */
+    private void drop(Blk b) {
+        if (b.pins > 0) {
+            b.dead = true;
+        } else {
+            b.file.delete();
         }
     }
 
@@ -399,13 +445,14 @@ final class RangeSource extends MediaDataSource {
             for (int attempt = 0; attempt < 3 && !closed && blk == null; attempt++) {
                 try {
                     int got = Math.max(fetch(idx * BLOCK, data, BLOCK), 0);
-                    File f = new File(dir, "b" + idx);
+                    File f = new File(dir, "b" + idx + "_" + fileSeq.incrementAndGet());
                     try (FileOutputStream out = new FileOutputStream(f)) {
                         out.write(data, 0, got);
                     }
                     blk = new Blk(f, got);
                 } catch (IOException e) {
                     error = e;
+                    note("fetch of block " + idx + " attempt " + attempt + " failed: " + e);
                     try {
                         Thread.sleep(500);
                     } catch (InterruptedException ie) {
@@ -431,18 +478,32 @@ final class RangeSource extends MediaDataSource {
         }
     }
 
-    private void clearDir() {
-        File[] files = dir.listFiles();
-        if (files != null) {
-            for (File f : files) {
-                if (f.getName().startsWith("b")) {
-                    f.delete();
-                }
-            }
+    private void note(String what) {
+        try (FileWriter w = new FileWriter(logFile, true)) {
+            w.write(new java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new java.util.Date())
+                    + " " + what + "
+");
+        } catch (IOException ignored) {
+            // diagnostics only
         }
+    }
+
+    private void clearDir() {
         synchronized (lock) {
             cache.clear();
         }
+        deleteTree(dir);
+    }
+
+    /** Deletes a folder and everything in it (a missing folder is fine). */
+    private static void deleteTree(File f) {
+        File[] kids = f.listFiles();
+        if (kids != null) {
+            for (File k : kids) {
+                deleteTree(k);
+            }
+        }
+        f.delete();
     }
 
     // ---------------------------------------------------------------- one ranged HTTP request
