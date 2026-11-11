@@ -97,6 +97,10 @@ public class PlayerActivity extends Activity {
     private boolean quickStart;
     private boolean restarting;
     private int recoveries;
+    /** 0 = stream with sound, 1 = stream picture only, then the older byte-range method. */
+    private int tsAttempt;
+    private boolean playedOnce;
+    private String rangePath;
 
     private final Runnable hideOverlay = new Runnable() {
         @Override
@@ -276,6 +280,7 @@ public class PlayerActivity extends Activity {
         if (buffer == null || quickStart) {
             // a stored file, or a picture shown while scanning: start at once
             waiting = false;
+            playedOnce = true;
             p.start();
             showOverlay();
             return;
@@ -302,6 +307,20 @@ public class PlayerActivity extends Activity {
     }
 
     private void onPlayerError() {
+        if (tsMode && !failed && !playedOnce) {
+            // this TV's stream reader refused the stream before anything played: try a simpler way
+            tsAttempt++;
+            if (tsAttempt == 1) {
+                note = "No sound: this TV could not read the sound track";
+                restartStream(streamStartMs, false, false);
+                return;
+            }
+            tsMode = false;
+            generation++;
+            dropMedia();
+            startRange(tsHost, tsPort, rangePath, tsToken);
+            return;
+        }
         if (tsMode && !failed && recoveries < MAX_RECOVERIES) {
             recoveries++;
             restartStream(posMs(), true, false);
@@ -352,6 +371,9 @@ public class PlayerActivity extends Activity {
             tsHost = intent.getStringExtra(EXTRA_HOST);
             tsPort = intent.getIntExtra(EXTRA_PORT, 0);
             tsToken = intent.getStringExtra(EXTRA_TOKEN);
+            rangePath = intent.getStringExtra(EXTRA_PATH);
+            tsAttempt = 0;
+            playedOnce = false;
             totalMs = intent.getLongExtra(EXTRA_DURATION, 0);
             bytesPerSec = intent.getLongExtra(EXTRA_BPS, 0);
             String n = intent.getStringExtra(EXTRA_NOTE);
@@ -359,47 +381,53 @@ public class PlayerActivity extends Activity {
             streamStartMs = 0;
             restartStream(0, true, false);
         } else {
-            final MediaPlayer mp = newPlayer();
-            player = mp;
             file = null;
             currentPath = null;
-            final String host = intent.getStringExtra(EXTRA_HOST);
-            final int port = intent.getIntExtra(EXTRA_PORT, 0);
-            final String remotePath = intent.getStringExtra(EXTRA_PATH);
-            final String token = intent.getStringExtra(EXTRA_TOKEN);
-            message.setText("Connecting to the phone...");
-            message.setVisibility(View.VISIBLE);
-            new Thread(() -> {
-                try {
-                    final RangeSource source = new RangeSource(host, port, remotePath, token,
-                            new File(getCacheDir(), "arcbuf"));
-                    runOnUiThread(() -> {
-                        if (mine != generation || player != mp) {
-                            source.close();
-                            return;
-                        }
-                        message.setVisibility(View.GONE);
-                        buffer = source;
-                        try {
-                            mp.setDataSource(source);
-                            mp.prepareAsync();
-                        } catch (RuntimeException e) {
-                            fail("Could not open this video.\n\nPress BACK to close.");
-                        }
-                    });
-                } catch (IOException | RuntimeException e) {
-                    runOnUiThread(() -> {
-                        if (mine == generation) {
-                            fail("Could not reach the phone.\nKeep the ARC app open on the phone.\n\n"
-                                    + "Press BACK to close.");
-                        }
-                    });
-                }
-            }, "arc-player-open").start();
+            startRange(intent.getStringExtra(EXTRA_HOST), intent.getIntExtra(EXTRA_PORT, 0),
+                    intent.getStringExtra(EXTRA_PATH), intent.getStringExtra(EXTRA_TOKEN));
         }
         if (previous != null && !previous.equals(file)) {
             previous.delete();
         }
+        handler.removeCallbacks(ticker);
+        handler.post(ticker);
+    }
+
+    /** The older method: read the phone's file in byte ranges (see RangeSource). */
+    private void startRange(final String host, final int port, final String remotePath, final String token) {
+        final int mine = ++generation;
+        final MediaPlayer mp = newPlayer();
+        player = mp;
+        failed = false;
+        message.setText("Connecting to the phone...");
+        message.setVisibility(View.VISIBLE);
+        new Thread(() -> {
+            try {
+                final RangeSource source = new RangeSource(host, port, remotePath, token,
+                        new File(getCacheDir(), "arcbuf"));
+                runOnUiThread(() -> {
+                    if (mine != generation || player != mp) {
+                        source.close();
+                        return;
+                    }
+                    message.setVisibility(View.GONE);
+                    buffer = source;
+                    try {
+                        mp.setDataSource(source);
+                        mp.prepareAsync();
+                    } catch (RuntimeException e) {
+                        fail("Could not open this video.\n\nPress BACK to close.");
+                    }
+                });
+            } catch (IOException | RuntimeException e) {
+                runOnUiThread(() -> {
+                    if (mine == generation) {
+                        fail("Could not reach the phone.\nKeep the ARC app open on the phone.\n\n"
+                                + "Press BACK to close.");
+                    }
+                });
+            }
+        }, "arc-player-open").start();
         handler.removeCallbacks(ticker);
         handler.post(ticker);
     }
@@ -489,6 +517,7 @@ public class PlayerActivity extends Activity {
             if (ahead >= need || rest || now - waitSince > 30_000) {
                 waiting = false;
                 starting = false;
+                playedOnce = true;
                 message.setVisibility(View.GONE);
                 mp.start();
                 showOverlay();

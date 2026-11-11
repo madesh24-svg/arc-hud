@@ -47,6 +47,10 @@ final class TsSession {
     private final boolean hevc;
     private final int audioType;
     private final byte[] adtsBase;
+    /** AAC frames waiting to go out together in one packet, as broadcast streams do. */
+    private final ByteArrayOutputStream audioBatch = new ByteArrayOutputStream();
+    private long batchPts;
+    private int batchFrames;
     /** First picture time actually used (a key frame at or before the one asked for), in milliseconds. */
     final long startMs;
 
@@ -222,7 +226,17 @@ final class TsSession {
                 tv = ex.getSampleTime();
             }
         }
+        flushAudio(mux);
         out.flush();
+    }
+
+    private void flushAudio(TsMuxer mux) throws IOException {
+        if (batchFrames > 0) {
+            byte[] bytes = audioBatch.toByteArray();
+            mux.writePes(TsMuxer.PID_AUDIO, 0xC0, bytes, 0, bytes.length, batchPts, -1, false);
+            audioBatch.reset();
+            batchFrames = 0;
+        }
     }
 
     // ---------------------------------------------------------------- conversions
@@ -239,7 +253,14 @@ final class TsSession {
             frame[5] = (byte) (((frameLength & 0x07) << 5) | 0x1F);
             frame[6] = (byte) 0xFC;
             System.arraycopy(data, 0, frame, 7, size);
-            mux.writePes(TsMuxer.PID_AUDIO, 0xC0, frame, 0, frame.length, pts, -1, false);
+            if (batchFrames == 0) {
+                batchPts = pts;
+            }
+            audioBatch.write(frame, 0, frame.length);
+            batchFrames++;
+            if (batchFrames >= 6 || audioBatch.size() >= 6000) {
+                flushAudio(mux);
+            }
         } else {
             int streamId = audioType == 0x03 ? 0xC0 : 0xBD;
             mux.writePes(TsMuxer.PID_AUDIO, streamId, data, 0, size, pts, -1, false);
