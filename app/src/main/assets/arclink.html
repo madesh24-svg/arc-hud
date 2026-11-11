@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ARC Link</title>
+<style>
+  body { margin: 0; padding: 24px 16px; background: #02081a; color: #ebfaff; font: 16px/1.4 monospace; }
+  main { max-width: 480px; margin: 0 auto; }
+  h1 { font-size: 22px; letter-spacing: 2px; margin: 0 0 4px; }
+  p { color: #96c8e1; margin: 0 0 20px; }
+  label { display: block; color: #ffb93c; font-weight: bold; margin: 16px 0 6px; }
+  input { width: 100%; box-sizing: border-box; padding: 14px; font: inherit; color: #ebfaff;
+          background: #0a2236; border: 1px solid #50dcff; border-radius: 6px; }
+  button { width: 100%; margin-top: 20px; padding: 16px; font: inherit; font-weight: bold; color: #02081a;
+           background: #50dcff; border: 0; border-radius: 6px; }
+  #msg { margin-top: 18px; min-height: 24px; color: #50dcff; }
+  #msg.bad { color: #ff7a7a; }
+</style>
+</head>
+<body>
+<main>
+  <h1>ARC LINK</h1>
+  <p>Send a link from this phone to the TV.</p>
+  <label for="pin">PIN (shown on the TV in ARC SETTINGS)</label>
+  <input id="pin" inputmode="numeric" autocomplete="off" maxlength="8">
+  <label for="url">YouTube link or web address</label>
+  <input id="url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" placeholder="Paste a link here">
+  <button id="go">SEND TO TV</button>
+  <div id="msg"></div>
+</main>
+<script>
+  var pin = document.getElementById('pin');
+  var url = document.getElementById('url');
+  var msg = document.getElementById('msg');
+  try { pin.value = localStorage.getItem('arcpin') || ''; } catch (e) { }
+  function say(text, bad) { msg.textContent = text; msg.className = bad ? 'bad' : ''; }
+  document.getElementById('go').onclick = function () {
+    if (!url.value.trim()) { say('Paste a link first.', true); return; }
+    say('Sending...', false);
+    fetch('/open', {
+      method: 'POST',
+      headers: { 'X-Pin': pin.value.trim(), 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'url=' + encodeURIComponent(url.value.trim())
+    }).then(function (r) {
+      return r.text().then(function (t) {
+        if (r.ok) { try { localStorage.setItem('arcpin', pin.value.trim()); } catch (e) { } url.value = ''; }
+        say(t, !r.ok);
+      });
+    }).catch(function () { say('Could not reach the TV.', true); });
+  };
+</script>
+</body>
+</html>

@@ -117,6 +117,26 @@ public class SettingsActivity extends Activity {
         });
         row("About", "SMARTTUBE + WEB, OPENS IN BROWSER", null);
 
+        section("ARC LINK (PHONE TO TV)");
+        boolean link = prefs.getBoolean(Prefs.LINK_ON, false);
+        row("Send links from a phone", link ? "ON" : "OFF", () -> {
+            prefs.edit().putBoolean(Prefs.LINK_ON, !link).apply();
+            LinkServer.sync(this);
+            if (!link && !LinkServer.running()) {
+                message("ARC LINK could not start on this TV.");
+            }
+            rebuild();
+        });
+        if (link) {
+            String addr = LinkServer.address();
+            row("Open this on your phone", addr == null ? "NO WI-FI" : addr.replace("http://", ""), null);
+            row("PIN (press OK for a new one)", LinkServer.pin(this), () -> confirm("Make a new PIN?", () -> {
+                LinkServer.newPin(this);
+                rebuild();
+            }));
+        }
+        row("About", "YOUTUBE -> SMARTTUBE, WEB -> BROWSER", null);
+
         section("ANIMATION");
         String anim = prefs.getString(Prefs.ANIM, "normal");
         row("Ring animation", anim.toUpperCase(), () -> {
@@ -333,7 +353,9 @@ public class SettingsActivity extends Activity {
                 .remove(Prefs.TITLE).remove(Prefs.SUBTITLE).remove(Prefs.SALUTATION)
                 .remove(Prefs.SSID).remove(Prefs.MAC).remove(Prefs.SHOW_STATUS).remove(Prefs.ANIM)
                 .remove(Prefs.HIDDEN).remove(Prefs.FAVS).remove(Prefs.NEVER_ASK).remove(Prefs.VOICE_TAKEOVER)
+                .remove(Prefs.LINK_ON)
                 .apply();
+        LinkServer.sync(this);
         Toast.makeText(this, "Settings reset", Toast.LENGTH_SHORT).show();
         build(0);
     }

@@ -22,6 +22,9 @@ final class Prefs {
     static final String NEVER_ASK = "ss_never";
     /** ARC SEARCH takes over voice searches (default on). */
     static final String VOICE_TAKEOVER = "voice_takeover";
+    /** ARC LINK (phone-to-TV link page) switch, default off, and its 4-digit PIN. */
+    static final String LINK_ON = "link_on";
+    static final String LINK_PIN = "link_pin";
 
     static final String DEFAULT_TITLE = "A.R.C.  H.U.D.";
     static final String DEFAULT_SUBTITLE = "ADAPTIVE RESPONSE CONSOLE";
