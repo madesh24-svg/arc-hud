@@ -41,8 +41,10 @@ public class PlayerActivity extends Activity {
 
     private static final int CYAN = 0xFF50DCFF;
     private static final int WHITE = 0xFFEBFAFF;
-    private static final int SHORT_SEEK_MS = 10_000;
-    private static final int LONG_SEEK_MS = 60_000;
+    /** Skip size for the 1st, 2nd, ... press of LEFT/RIGHT in a row; after the last it starts over at 2 s. */
+    private static final int[] SKIP_STEPS_S = {2, 4, 8, 32, 64, 128};
+    /** Presses closer together than this count as one chain. */
+    private static final long SKIP_CHAIN_MS = 2000;
     private static final long OVERLAY_MS = 4000;
 
     private static volatile String currentPath;
@@ -68,6 +70,11 @@ public class PlayerActivity extends Activity {
     private boolean waiting;
     private boolean starting;
     private long waitSince;
+    private int skipStep;
+    private int skipDir;
+    private long skipLastAt;
+    private String skipNote = "";
+    private long skipNoteUntil;
 
     private final Runnable hideOverlay = new Runnable() {
         @Override
@@ -399,21 +406,36 @@ public class PlayerActivity extends Activity {
                 return true;
             case KeyEvent.KEYCODE_DPAD_RIGHT:
             case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
-                seek(SHORT_SEEK_MS);
+                skip(1);
                 return true;
             case KeyEvent.KEYCODE_DPAD_LEFT:
             case KeyEvent.KEYCODE_MEDIA_REWIND:
-                seek(-SHORT_SEEK_MS);
+                skip(-1);
                 return true;
             case KeyEvent.KEYCODE_DPAD_UP:
-                seek(LONG_SEEK_MS);
-                return true;
             case KeyEvent.KEYCODE_DPAD_DOWN:
-                seek(-LONG_SEEK_MS);
+                // no seeking here: on the phone remote the Power key sits right above UP
+                showOverlay();
                 return true;
             default:
                 return super.onKeyDown(keyCode, event);
         }
+    }
+
+    /** LEFT/RIGHT: each press in a quick row jumps further (2, 4, 8, 32, 64, 128 s), then starts over. */
+    private void skip(int direction) {
+        long now = SystemClock.elapsedRealtime();
+        if (direction == skipDir && now - skipLastAt <= SKIP_CHAIN_MS) {
+            skipStep = (skipStep + 1) % SKIP_STEPS_S.length;
+        } else {
+            skipStep = 0;
+        }
+        skipDir = direction;
+        skipLastAt = now;
+        int seconds = SKIP_STEPS_S[skipStep];
+        skipNote = (direction > 0 ? "+" : "-") + seconds + " s";
+        skipNoteUntil = now + 2500;
+        seek(direction * seconds * 1000);
     }
 
     private void seek(int deltaMs) {
@@ -441,7 +463,8 @@ public class PlayerActivity extends Activity {
         int pos = player.getCurrentPosition();
         bar.setProgress(total > 0 ? (int) (1000L * pos / total) : 0);
         time.setText(clock(pos) + " / " + (total > 0 ? clock(total) : "--:--")
-                + (player.isPlaying() ? "" : "   PAUSED"));
+                + (player.isPlaying() ? "" : "   PAUSED")
+                + (SystemClock.elapsedRealtime() < skipNoteUntil ? "   " + skipNote : ""));
     }
 
     private static String clock(int ms) {
