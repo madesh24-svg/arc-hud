@@ -36,7 +36,7 @@ final class Updater {
             "api.github.com", "github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"));
     private static final int MAX_API_BYTES = 512 * 1024;
     private static final long MAX_APK_BYTES = 20L * 1024 * 1024;
-    private static final long     private static final int MAX_REDIRECTS = 5;
+    private static final int MAX_REDIRECTS = 5;
 
     static final class Release {
         final int versionCode;
