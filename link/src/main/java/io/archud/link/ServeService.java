@@ -21,6 +21,7 @@ import android.os.PowerManager;
 import android.provider.OpenableColumns;
 import android.widget.Toast;
 
+import java.io.BufferedOutputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.FileInputStream;
 import java.io.IOException;
@@ -37,6 +38,7 @@ import java.security.SecureRandom;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Keeps one video on this phone available to the TV. It listens on a random port, answers only the TV
@@ -61,6 +63,10 @@ public class ServeService extends Service {
     private volatile String tvHost = "";
     private volatile String mime = "video/mp4";
     private volatile long lastActivity;
+    /** What the phone found in the current video (null until looked at). */
+    private volatile TsSession.Info info;
+    private final AtomicInteger streamGen = new AtomicInteger();
+    private volatile Socket streamSocket;
     private PowerManager.WakeLock wake;
     private WifiManager.WifiLock wifi;
 
@@ -113,17 +119,23 @@ public class ServeService extends Service {
             return START_NOT_STICKY;
         }
         final String title = name;
-        final String body;
-        try {
-            body = "port=" + port + "&path=" + URLEncoder.encode(PATH, "UTF-8") + "&token=" + token
-                    + "&title=" + URLEncoder.encode(title, "UTF-8");
-        } catch (IOException e) {
-            stopSelf();
-            return START_NOT_STICKY;
-        }
         pool.execute(() -> {
             try {
-                TvClient.Reply r = TvClient.post(host, "/play", pin, body);
+                TsSession.Info found = TsSession.probe(this, video);
+                info = found;
+                StringBuilder form = new StringBuilder();
+                form.append("port=").append(port).append("&path=").append(URLEncoder.encode(PATH, "UTF-8"))
+                        .append("&token=").append(token).append("&title=").append(URLEncoder.encode(title, "UTF-8"));
+                if (found.ok) {
+                    // the phone repackages this video as a stream the TV can start anywhere
+                    long size = fileSize(video);
+                    long bytesPerSecond = size > 0 ? size * 1000 / found.durationMs : 0;
+                    form.append("&mode=ts&duration=").append(found.durationMs).append("&bps=").append(bytesPerSecond);
+                    if (!found.note.isEmpty()) {
+                        form.append("&note=").append(URLEncoder.encode(found.note, "UTF-8"));
+                    }
+                }
+                TvClient.Reply r = TvClient.post(host, "/play", pin, form.toString());
                 toast(r.ok() ? "Playing on the TV." : (r.text.isEmpty() ? "The TV said " + r.code : r.text));
                 if (!r.ok()) {
                     main.post(this::stopSelf);
@@ -273,10 +285,14 @@ public class ServeService extends Service {
             }
             String[] lines = head.split("\r\n");
             String[] request = lines[0].split(" ");
-            if (request.length < 2 || !"GET".equals(request[0]) || !PATH.equals(request[1])) {
+            if (request.length < 2 || !"GET".equals(request[0])) {
                 respond(s, "404 Not Found", null);
                 return;
             }
+            String target = request[1];
+            int q = target.indexOf('?');
+            String route = q < 0 ? target : target.substring(0, q);
+            String query = q < 0 ? "" : target.substring(q + 1);
             String range = null;
             String auth = "";
             for (int i = 1; i < lines.length; i++) {
@@ -298,9 +314,90 @@ public class ServeService extends Service {
                 return;
             }
             lastActivity = System.currentTimeMillis();
-            serve(s, range);
+            if ("/s".equals(route)) {
+                serveStream(s, query);
+            } else if (PATH.equals(route)) {
+                serve(s, range);
+            } else {
+                respond(s, "404 Not Found", null);
+            }
         } catch (IOException | RuntimeException e) {
             // the TV closed the connection (seek or stop): normal
+        }
+    }
+
+    private long fileSize(Uri u) {
+        try (ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(u, "r")) {
+            return pfd.getStatSize();
+        } catch (IOException | RuntimeException e) {
+            return -1;
+        }
+    }
+
+    /**
+     * The TV asks for the video as a stream starting at a time (start=milliseconds, audio=0 for picture
+     * only, used while scanning). A newer request replaces an older one, which is how seeking works.
+     */
+    private void serveStream(Socket s, String query) throws IOException {
+        TsSession.Info found = info;
+        if (found == null || !found.ok) {
+            respond(s, "404 Not Found", null);
+            return;
+        }
+        long startMs = 0;
+        boolean withAudio = true;
+        for (String pair : query.split("&")) {
+            int eq = pair.indexOf('=');
+            if (eq <= 0) {
+                continue;
+            }
+            String key = pair.substring(0, eq);
+            String value = pair.substring(eq + 1);
+            try {
+                if ("start".equals(key)) {
+                    startMs = Math.max(0, Long.parseLong(value));
+                } else if ("audio".equals(key)) {
+                    withAudio = !"0".equals(value);
+                }
+            } catch (NumberFormatException ignored) {
+                // keep the default
+            }
+        }
+        final int mine = streamGen.incrementAndGet();
+        Socket previous = streamSocket;
+        streamSocket = s;
+        if (previous != null && previous != s) {
+            try {
+                previous.close();
+            } catch (IOException ignored) {
+                // already gone
+            }
+        }
+        TsSession session = null;
+        boolean started = false;
+        try {
+            session = new TsSession(this, uri, found, startMs, withAudio);
+            OutputStream out = new BufferedOutputStream(s.getOutputStream(), 64 * 1024);
+            out.write(("HTTP/1.1 200 OK\r\nContent-Type: video/mp2t\r\nX-Start-Ms: " + session.startMs
+                    + "\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+            started = true;
+            session.stream(out, () -> {
+                lastActivity = System.currentTimeMillis();
+                return mine != streamGen.get() || s.isClosed();
+            });
+            out.flush();
+        } catch (IOException e) {
+            if (!started) {
+                respond(s, "500 Internal Server Error", null);
+            }
+        } finally {
+            if (session != null) {
+                session.close();
+            }
+            if (streamSocket == s) {
+                streamSocket = null;
+            }
         }
     }
 

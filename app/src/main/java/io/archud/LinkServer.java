@@ -505,14 +505,33 @@ final class LinkServer {
             reply(s, 400, "text/plain", "Bad play request.");
             return;
         }
-        app.startActivity(new Intent(app, PlayerActivity.class)
+        Intent play = new Intent(app, PlayerActivity.class)
                 .putExtra(PlayerActivity.EXTRA_HOST, s.getInetAddress().getHostAddress())
                 .putExtra(PlayerActivity.EXTRA_PORT, portNumber)
                 .putExtra(PlayerActivity.EXTRA_PATH, path)
                 .putExtra(PlayerActivity.EXTRA_TOKEN, token)
-                .putExtra(PlayerActivity.EXTRA_TITLE, decode(form(body, "title")))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+                .putExtra(PlayerActivity.EXTRA_TITLE, decode(form(body, "title")));
+        if ("ts".equals(form(body, "mode"))) {
+            // the phone repackages the video as a stream it can start anywhere (see PhoneStream)
+            long durationMs = number(form(body, "duration"), 0, 1000L * 3600 * 100);
+            if (durationMs > 0) {
+                play.putExtra(PlayerActivity.EXTRA_MODE, "ts")
+                        .putExtra(PlayerActivity.EXTRA_DURATION, durationMs)
+                        .putExtra(PlayerActivity.EXTRA_BPS, number(form(body, "bps"), 0, 1L << 30))
+                        .putExtra(PlayerActivity.EXTRA_NOTE, decode(form(body, "note")));
+            }
+        }
+        app.startActivity(play.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         reply(s, 200, "text/plain", "Playing on the TV.");
+    }
+
+    /** A whole number from text, kept between 0 and max (0 when it is not a number). */
+    private static long number(String text, long min, long max) {
+        try {
+            return Math.max(min, Math.min(max, Long.parseLong(text.trim())));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     // ---------------------------------------------------------------- opening links

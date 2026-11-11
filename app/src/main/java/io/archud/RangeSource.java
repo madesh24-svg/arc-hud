@@ -33,7 +33,7 @@ import java.util.Map;
  * A player reads audio and video from the file at the same time, often far apart (always after a big
  * seek), so the buffer follows several read positions ("cursors") at once instead of one.
  */
-final class RangeSource extends MediaDataSource {
+final class RangeSource extends MediaDataSource implements BufferInfo {
     private static final int BLOCK = 1 << 20;
     /** Blocks kept ready in front of one read position (shared out when there are several). */
     private static final int AHEAD = 40;
@@ -171,6 +171,11 @@ final class RangeSource extends MediaDataSource {
     }
 
     @Override
+    public long sizeBytes() {
+        return total;
+    }
+
+    @Override
     public void close() {
         synchronized (lock) {
             closed = true;
@@ -182,14 +187,16 @@ final class RangeSource extends MediaDataSource {
     // ---------------------------------------------------------------- buffer status for the player
 
     /** Bytes ready in a row in front of the slowest active read position. */
-    long ahead() {
+    @Override
+    public long ahead() {
         synchronized (lock) {
             return aheadLocked();
         }
     }
 
     /** True when everything from every active read position to the end of the file is buffered. */
-    boolean restBuffered() {
+    @Override
+    public boolean restBuffered() {
         synchronized (lock) {
             long t = total;
             if (t < 0 || cursors.isEmpty()) {
@@ -206,7 +213,8 @@ final class RangeSource extends MediaDataSource {
     }
 
     /** Bytes per second received over the last few seconds (0 until there is data). */
-    long rate() {
+    @Override
+    public long rate() {
         synchronized (lock) {
             long now = System.currentTimeMillis();
             while (!samples.isEmpty() && now - samples.peekFirst()[0] > RATE_WINDOW_MS) {
