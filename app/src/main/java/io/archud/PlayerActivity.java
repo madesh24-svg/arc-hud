@@ -4,14 +4,15 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.SurfaceTexture;
 import android.media.MediaPlayer;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.KeyEvent;
-import android.view.SurfaceHolder;
-import android.view.SurfaceView;
+import android.view.Surface;
+import android.view.TextureView;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
@@ -29,7 +30,7 @@ import java.util.Locale;
  * the home network (see RangeSource). Remote: OK = pause/play, LEFT/RIGHT = 10 s, UP/DOWN = 1 min,
  * BACK = close.
  */
-public class PlayerActivity extends Activity implements SurfaceHolder.Callback {
+public class PlayerActivity extends Activity {
     static final String EXTRA_FILE = "file";
     static final String EXTRA_TITLE = "title";
     static final String EXTRA_HOST = "host";
@@ -47,7 +48,8 @@ public class PlayerActivity extends Activity implements SurfaceHolder.Callback {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private FrameLayout root;
-    private SurfaceView surface;
+    private TextureView surface;
+    private Surface output;
     private LinearLayout overlay;
     private ProgressBar bar;
     private TextView title;
@@ -90,8 +92,43 @@ public class PlayerActivity extends Activity implements SurfaceHolder.Callback {
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
 
-        surface = new SurfaceView(this);
-        surface.getHolder().addCallback(this);
+        // A TextureView, not a SurfaceView: it applies the clip's rotation (phone videos are often
+        // portrait) and avoids this TV's hardware video overlay, which ignores rotation and can freeze.
+        surface = new TextureView(this);
+        surface.setSurfaceTextureListener(new TextureView.SurfaceTextureListener() {
+            @Override
+            public void onSurfaceTextureAvailable(SurfaceTexture st, int width, int height) {
+                output = new Surface(st);
+                surfaceReady = true;
+                if (player != null) {
+                    player.setSurface(output);
+                }
+                startPending();
+            }
+
+            @Override
+            public void onSurfaceTextureSizeChanged(SurfaceTexture st, int width, int height) {
+                // the size follows the video's own size (see fit)
+            }
+
+            @Override
+            public boolean onSurfaceTextureDestroyed(SurfaceTexture st) {
+                surfaceReady = false;
+                if (player != null) {
+                    player.setSurface(null);
+                }
+                if (output != null) {
+                    output.release();
+                    output = null;
+                }
+                return true;
+            }
+
+            @Override
+            public void onSurfaceTextureUpdated(SurfaceTexture st) {
+                // each new video frame: nothing to do
+            }
+        });
         root.addView(surface, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER));
 
@@ -129,30 +166,6 @@ public class PlayerActivity extends Activity implements SurfaceHolder.Callback {
         startPending();
     }
 
-    // ---------------------------------------------------------------- surface
-
-    @Override
-    public void surfaceCreated(SurfaceHolder holder) {
-        surfaceReady = true;
-        if (player != null) {
-            player.setDisplay(holder);
-        }
-        startPending();
-    }
-
-    @Override
-    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
-        // nothing to do: the size is set from the video's own size
-    }
-
-    @Override
-    public void surfaceDestroyed(SurfaceHolder holder) {
-        surfaceReady = false;
-        if (player != null) {
-            player.setDisplay(null);
-        }
-    }
-
     // ---------------------------------------------------------------- playback
 
     /** Starts the video named in the pending intent, replacing the one before. */
@@ -171,7 +184,7 @@ public class PlayerActivity extends Activity implements SurfaceHolder.Callback {
 
         final MediaPlayer mp = new MediaPlayer();
         player = mp;
-        mp.setDisplay(surface.getHolder());
+        mp.setSurface(output);
         mp.setOnPreparedListener(p -> {
             prepared = true;
             p.start();
