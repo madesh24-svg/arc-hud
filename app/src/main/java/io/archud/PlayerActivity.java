@@ -41,10 +41,9 @@ public class PlayerActivity extends Activity {
 
     private static final int CYAN = 0xFF50DCFF;
     private static final int WHITE = 0xFFEBFAFF;
-    /** Skip size for the 1st, 2nd, ... press of LEFT/RIGHT in a row; after the last it starts over at 2 s. */
-    private static final int[] SKIP_STEPS_S = {2, 4, 8, 32, 64, 128};
-    /** Presses closer together than this count as one chain. */
-    private static final long SKIP_CHAIN_MS = 2000;
+    /** Fast-forward / rewind speeds: video seconds per real second; the press after the last returns to normal. */
+    private static final int[] SCAN_SPEEDS = {2, 4, 8, 32, 64, 128};
+    private static final long SCAN_TICK_MS = 400;
     private static final long OVERLAY_MS = 4000;
 
     private static volatile String currentPath;
@@ -70,9 +69,10 @@ public class PlayerActivity extends Activity {
     private boolean waiting;
     private boolean starting;
     private long waitSince;
-    private int skipStep;
-    private int skipDir;
-    private long skipLastAt;
+    private int scanDir;
+    private int scanLevel;
+    private boolean seekPending;
+    private long seekAt;
     private String skipNote = "";
     private long skipNoteUntil;
 
@@ -80,6 +80,34 @@ public class PlayerActivity extends Activity {
         @Override
         public void run() {
             overlay.setVisibility(View.GONE);
+        }
+    };
+
+    private final Runnable scanTick = new Runnable() {
+        @Override
+        public void run() {
+            if (scanDir == 0 || player == null || !prepared) {
+                return;
+            }
+            long now = SystemClock.elapsedRealtime();
+            if (!seekPending || now - seekAt > 3000) {
+                int total = player.getDuration();
+                int target = player.getCurrentPosition() + (int) (SCAN_SPEEDS[scanLevel] * SCAN_TICK_MS) * scanDir;
+                if (target <= 0) {
+                    stopScan(true);
+                    player.seekTo(0);
+                    return;
+                }
+                if (total > 0 && target >= total - 1000) {
+                    stopScan(true);
+                    return;
+                }
+                seekPending = true;
+                seekAt = now;
+                player.seekTo(target);
+            }
+            showOverlay();
+            handler.postDelayed(this, SCAN_TICK_MS);
         }
     };
 
@@ -215,6 +243,7 @@ public class PlayerActivity extends Activity {
         });
         mp.setOnVideoSizeChangedListener((p, w, h) -> fit(w, h));
         mp.setOnCompletionListener(p -> finish());
+        mp.setOnSeekCompleteListener(p -> seekPending = false);
         mp.setOnErrorListener((p, what, extra) -> {
             fail("This TV could not play this video.\nIts format or sound track is not supported.\n\n"
                     + "Press BACK to close.");
@@ -317,7 +346,7 @@ public class PlayerActivity extends Activity {
                         + mbps(src.rate()) + " MB/s, this video needs " + mbps(perSec) + " MB/s");
                 message.setVisibility(View.VISIBLE);
             }
-        } else if (mp.isPlaying() && ahead < lowBytes && !rest) {
+        } else if (scanDir == 0 && mp.isPlaying() && ahead < lowBytes && !rest) {
             mp.pause();
             waiting = true;
             waitSince = now;
@@ -334,6 +363,8 @@ public class PlayerActivity extends Activity {
 
     private void releasePlayer() {
         prepared = false;
+        scanDir = 0;
+        handler.removeCallbacks(scanTick);
         waiting = false;
         if (rangeSource != null) {
             rangeSource.close();
@@ -389,6 +420,10 @@ public class PlayerActivity extends Activity {
             case KeyEvent.KEYCODE_ENTER:
             case KeyEvent.KEYCODE_SPACE:
             case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+                if (scanDir != 0) {
+                    stopScan(true);
+                    return true;
+                }
                 if (player.isPlaying()) {
                     player.pause();
                 } else {
@@ -397,20 +432,25 @@ public class PlayerActivity extends Activity {
                 showOverlay();
                 return true;
             case KeyEvent.KEYCODE_MEDIA_PLAY:
+                if (scanDir != 0) {
+                    stopScan(true);
+                    return true;
+                }
                 resume();
                 showOverlay();
                 return true;
             case KeyEvent.KEYCODE_MEDIA_PAUSE:
+                stopScan(false);
                 player.pause();
                 showOverlay();
                 return true;
             case KeyEvent.KEYCODE_DPAD_RIGHT:
             case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
-                skip(1);
+                scanKey(1);
                 return true;
             case KeyEvent.KEYCODE_DPAD_LEFT:
             case KeyEvent.KEYCODE_MEDIA_REWIND:
-                skip(-1);
+                scanKey(-1);
                 return true;
             case KeyEvent.KEYCODE_DPAD_UP:
             case KeyEvent.KEYCODE_DPAD_DOWN:
@@ -422,20 +462,54 @@ public class PlayerActivity extends Activity {
         }
     }
 
-    /** LEFT/RIGHT: each press in a quick row jumps further (2, 4, 8, 32, 64, 128 s), then starts over. */
-    private void skip(int direction) {
-        long now = SystemClock.elapsedRealtime();
-        if (direction == skipDir && now - skipLastAt <= SKIP_CHAIN_MS) {
-            skipStep = (skipStep + 1) % SKIP_STEPS_S.length;
+    /**
+     * LEFT/RIGHT work like a classic remote: the first press starts scanning that way at 2x, each further
+     * press in the same direction is faster (up to 128x), the press after that returns to normal speed,
+     * and OK/Play stops the scan wherever it is. The sound is muted while scanning.
+     */
+    private void scanKey(int direction) {
+        if (scanDir == direction) {
+            if (scanLevel + 1 >= SCAN_SPEEDS.length) {
+                stopScan(true);
+                return;
+            }
+            scanLevel++;
         } else {
-            skipStep = 0;
+            scanDir = direction;
+            scanLevel = 0;
+            waiting = false;
+            starting = false;
+            message.setVisibility(View.GONE);
+            player.setVolume(0f, 0f);
+            if (!player.isPlaying()) {
+                player.start();
+            }
+            seekPending = false;
+            handler.removeCallbacks(scanTick);
+            handler.post(scanTick);
         }
-        skipDir = direction;
-        skipLastAt = now;
-        int seconds = SKIP_STEPS_S[skipStep];
-        skipNote = (direction > 0 ? "+" : "-") + seconds + " s";
-        skipNoteUntil = now + 2500;
-        seek(direction * seconds * 1000);
+        skipNote = (direction > 0 ? ">> " : "<< ") + SCAN_SPEEDS[scanLevel] + "x";
+        skipNoteUntil = Long.MAX_VALUE;
+        showOverlay();
+    }
+
+    /** Ends a scan; with play=true normal playback continues from where the scan stopped. */
+    private void stopScan(boolean play) {
+        if (scanDir == 0) {
+            return;
+        }
+        scanDir = 0;
+        handler.removeCallbacks(scanTick);
+        seekPending = false;
+        skipNote = "";
+        skipNoteUntil = 0;
+        if (player != null) {
+            player.setVolume(1f, 1f);
+            if (play) {
+                player.start();
+            }
+        }
+        showOverlay();
     }
 
     private void seek(int deltaMs) {
