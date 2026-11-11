@@ -481,8 +481,7 @@ final class RangeSource extends MediaDataSource {
     private void note(String what) {
         try (FileWriter w = new FileWriter(logFile, true)) {
             w.write(new java.text.SimpleDateFormat("HH:mm:ss.SSS", Locale.US).format(new java.util.Date())
-                    + " " + what + "
-");
+                    + " " + what + "\n");
         } catch (IOException ignored) {
             // diagnostics only
         }
