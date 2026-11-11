@@ -1,0 +1,49 @@
+plugins {
+    id 'com.android.application'
+}
+
+def runNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1") as int
+
+android {
+    namespace 'io.archud.link'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'io.archud.link'
+        minSdk 26
+        // 34: foreground-service rules apply, but not the Android 15 edge-to-edge enforcement.
+        targetSdk 34
+        // Same numbering as the TV app: both APKs come from one release, so one number serves both.
+        versionCode runNumber
+        versionName "1.0.${runNumber}"
+    }
+
+    signingConfigs {
+        shared {
+            // Same key as the TV app, from CI secrets (never committed); see .github/workflows/build.yml.
+            storeFile file(System.getenv("ARCHUD_KEYSTORE") ?: "missing.p12")
+            storeType 'pkcs12'
+            storePassword System.getenv("ARCHUD_KEYSTORE_PASSWORD")
+            keyAlias 'archud'
+            keyPassword System.getenv("ARCHUD_KEYSTORE_PASSWORD")
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+            signingConfig signingConfigs.shared
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}

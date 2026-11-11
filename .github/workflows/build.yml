@@ -30,7 +30,9 @@ jobs:
           ARCHUD_KEYSTORE_PASSWORD: ${{ secrets.ARCHUD_KEYSTORE_PASSWORD }}
         run: gradle assembleRelease --no-daemon --stacktrace
       - name: Rename
-        run: cp app/build/outputs/apk/release/app-release.apk arc-hud.apk
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk arc-hud.apk
+          cp link/build/outputs/apk/release/link-release.apk arc-link.apk
       # Manufacturer table (MAC prefix -> vendor) from Wireshark's public OUI list, published with the
       # release so devices download it from this repo only. Optional: the release still ships without it.
       - name: Build manufacturer table
@@ -45,5 +47,6 @@ jobs:
           name: ARC HUD 1.0.${{ github.run_number }}
           files: |
             arc-hud.apk
+            arc-link.apk
             oui.tsv.gz
           make_latest: true
