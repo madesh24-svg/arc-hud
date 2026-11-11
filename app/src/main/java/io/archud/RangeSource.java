@@ -13,26 +13,38 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
- * Lets the player read a video that stays on a phone. A background thread reads 1 MB blocks over
- * HTTP Range (plain sockets, local-network addresses only, see NetPolicy) well ahead of the player and
- * keeps them as small temporary files in the app's private cache (the TV's Java heap is only 48 MB),
- * so playback can begin after the first 20-30 seconds are buffered, keeps going through short Wi-Fi
- * hiccups, and seeking works. Blocks far behind the player are deleted; everything is removed on close.
+ * Lets the player read a video that stays on a phone. Background threads read 1 MB blocks over HTTP
+ * Range (plain sockets, local-network addresses only, see NetPolicy) well ahead of the player and keep
+ * them as small temporary files in the app's private cache (the TV's Java heap is only 48 MB), so
+ * playback can begin after the first 20-30 seconds are buffered, keeps going through short Wi-Fi
+ * hiccups, and seeking works.
+ *
+ * A player reads audio and video from the file at the same time, often far apart (always after a big
+ * seek), so the buffer follows several read positions ("cursors") at once instead of one.
  */
 final class RangeSource extends MediaDataSource {
     private static final int BLOCK = 1 << 20;
-    /** Blocks kept ready in front of the read position (about 30-50 s of a typical phone video). */
+    /** Blocks kept ready in front of one read position (shared out when there are several). */
     private static final int AHEAD = 40;
+    private static final int BEHIND = 4;
     /** Blocks fetched at the same time: several connections beat one over a busy Wi-Fi link. */
     private static final int FETCHERS = 3;
+    private static final int MAX_CURSORS = 3;
+    /** A read this close to a cursor belongs to it; further away starts another cursor. */
+    private static final long SAME_CURSOR = 16L * BLOCK;
+    private static final long CURSOR_IDLE_MS = 20_000;
+    private static final long WAIT_LIMIT_MS = 30_000;
     private static final long RATE_WINDOW_MS = 8000;
-    private static final int BEHIND = 4;
-    private static final long WAIT_LIMIT_MS = 20_000;
 
     private static final class Blk {
         final File file;
@@ -44,6 +56,13 @@ final class RangeSource extends MediaDataSource {
         }
     }
 
+    /** One read position: where it is, which block it is waiting for, and when it last read. */
+    private static final class Cursor {
+        long pos;
+        long wanted = -1;
+        long touched;
+    }
+
     private final InetAddress addr;
     private final int port;
     private final String path;
@@ -51,12 +70,11 @@ final class RangeSource extends MediaDataSource {
     private final File dir;
     private final Object lock = new Object();
     private final HashMap<Long, Blk> cache = new HashMap<>();
-    private final java.util.HashSet<Long> inFlight = new java.util.HashSet<>();
-    private final java.util.ArrayDeque<long[]> samples = new java.util.ArrayDeque<>();
+    private final HashSet<Long> inFlight = new HashSet<>();
+    private final List<Cursor> cursors = new ArrayList<>();
+    private final ArrayDeque<long[]> samples = new ArrayDeque<>();
     private volatile long total = -1;
     private volatile boolean closed;
-    private long lastRead;
-    private long wanted = -1;
     private IOException failure;
 
     /** Connects once to learn the file size; throws if the phone cannot be reached or refuses. */
@@ -117,7 +135,9 @@ final class RangeSource extends MediaDataSource {
             done += n;
         }
         synchronized (lock) {
-            lastRead = position + done;
+            Cursor c = cursorFor(position);
+            c.pos = position + done;
+            c.wanted = -1;
             lock.notifyAll();
         }
         return done == 0 ? -1 : done;
@@ -139,24 +159,73 @@ final class RangeSource extends MediaDataSource {
 
     // ---------------------------------------------------------------- buffer status for the player
 
-    /** Bytes ready in a row in front of the read position. */
+    /** Bytes ready in a row in front of the slowest active read position. */
     long ahead() {
         synchronized (lock) {
             return aheadLocked();
         }
     }
 
-    /** True when everything from the read position to the end of the file is already buffered. */
+    /** True when everything from every active read position to the end of the file is buffered. */
     boolean restBuffered() {
         synchronized (lock) {
             long t = total;
-            return t >= 0 && t - lastRead <= aheadLocked();
+            if (t < 0 || cursors.isEmpty()) {
+                return false;
+            }
+            long now = System.currentTimeMillis();
+            for (Cursor c : cursors) {
+                if (now - c.touched <= CURSOR_IDLE_MS && !nearEnd(c) && t - c.pos > aheadOf(c)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    /** Bytes per second received over the last few seconds (0 until there is data). */
+    long rate() {
+        synchronized (lock) {
+            long now = System.currentTimeMillis();
+            while (!samples.isEmpty() && now - samples.peekFirst()[0] > RATE_WINDOW_MS) {
+                samples.removeFirst();
+            }
+            if (samples.isEmpty()) {
+                return 0;
+            }
+            long sum = 0;
+            for (long[] s : samples) {
+                sum += s[1];
+            }
+            long span = Math.max(1000, now - samples.peekFirst()[0]);
+            return sum * 1000 / span;
         }
     }
 
     private long aheadLocked() {
-        long end = lastRead;
-        long idx = lastRead / BLOCK;
+        long now = System.currentTimeMillis();
+        long least = -1;
+        for (Cursor c : cursors) {
+            if (now - c.touched > CURSOR_IDLE_MS || nearEnd(c)) {
+                continue;
+            }
+            long a = aheadOf(c);
+            if (least < 0 || a < least) {
+                least = a;
+            }
+        }
+        return Math.max(0, least);
+    }
+
+    /** A read position in the last few MB is the player reading the file's index (or finishing). */
+    private boolean nearEnd(Cursor c) {
+        long t = total;
+        return t >= 0 && t - c.pos <= 4L * BLOCK;
+    }
+
+    private long aheadOf(Cursor c) {
+        long end = c.pos;
+        long idx = c.pos / BLOCK;
         while (true) {
             Blk b = cache.get(idx);
             if (b == null) {
@@ -168,12 +237,50 @@ final class RangeSource extends MediaDataSource {
             }
             idx++;
         }
-        return Math.max(0, end - lastRead);
+        return Math.max(0, end - c.pos);
+    }
+
+    // ---------------------------------------------------------------- cursors
+
+    /** The cursor a read at pos belongs to (a new one if none is near). Call with the lock held. */
+    private Cursor cursorFor(long pos) {
+        long now = System.currentTimeMillis();
+        Cursor best = null;
+        Iterator<Cursor> it = cursors.iterator();
+        while (it.hasNext()) {
+            Cursor c = it.next();
+            if (now - c.touched > CURSOR_IDLE_MS) {
+                it.remove();
+                continue;
+            }
+            if (Math.abs(c.pos - pos) <= SAME_CURSOR && (best == null
+                    || Math.abs(c.pos - pos) < Math.abs(best.pos - pos))) {
+                best = c;
+            }
+        }
+        if (best == null) {
+            best = new Cursor();
+            best.pos = pos;
+            cursors.add(best);
+            if (cursors.size() > MAX_CURSORS) {
+                Cursor oldest = cursors.get(0);
+                for (Cursor c : cursors) {
+                    if (c.touched < oldest.touched) {
+                        oldest = c;
+                    }
+                }
+                if (oldest != best) {
+                    cursors.remove(oldest);
+                }
+            }
+        }
+        best.touched = now;
+        return best;
     }
 
     // ---------------------------------------------------------------- reading ahead
 
-    /** Waits for the block holding pos, asking the fetch thread to get it first. */
+    /** Waits for the block holding pos, asking the fetch threads to get it first. */
     private Blk obtain(long idx, long pos) throws IOException {
         long deadline = System.currentTimeMillis() + WAIT_LIMIT_MS;
         synchronized (lock) {
@@ -188,8 +295,8 @@ final class RangeSource extends MediaDataSource {
                 if (failure != null) {
                     throw new IOException(failure.getMessage());
                 }
-                wanted = idx;
-                lastRead = pos;
+                Cursor c = cursorFor(pos);
+                c.wanted = idx;
                 lock.notifyAll();
                 long left = deadline - System.currentTimeMillis();
                 if (left <= 0) {
@@ -205,31 +312,61 @@ final class RangeSource extends MediaDataSource {
         }
     }
 
-    /** The block to fetch next (the one the player is waiting for, else the next missing one ahead). */
-    private long next() {
-        if (wanted >= 0 && !cache.containsKey(wanted) && !inFlight.contains(wanted)) {
-            return wanted;
-        }
-        long base = lastRead / BLOCK;
-        long t = total;
-        for (long i = base; i <= base + AHEAD; i++) {
-            if (t >= 0 && i * BLOCK >= t) {
-                break;
+    /** Blocks each cursor may keep ahead of itself: the budget is shared between active cursors. */
+    private int aheadBudget() {
+        long now = System.currentTimeMillis();
+        int active = 0;
+        for (Cursor c : cursors) {
+            if (now - c.touched <= CURSOR_IDLE_MS) {
+                active++;
             }
-            if (!cache.containsKey(i) && !inFlight.contains(i)) {
-                return i;
+        }
+        return Math.max(8, AHEAD / Math.max(1, active));
+    }
+
+    /** The block to fetch next: one a reader is waiting for, else the next missing one ahead of a cursor. */
+    private long next() {
+        long t = total;
+        for (Cursor c : cursors) {
+            long w = c.wanted;
+            if (w >= 0 && !cache.containsKey(w) && !inFlight.contains(w)) {
+                return w;
+            }
+        }
+        int budget = aheadBudget();
+        long now = System.currentTimeMillis();
+        for (Cursor c : cursors) {
+            if (now - c.touched > CURSOR_IDLE_MS) {
+                continue;
+            }
+            long base = c.pos / BLOCK;
+            for (long i = base; i <= base + budget; i++) {
+                if (t >= 0 && i * BLOCK >= t) {
+                    break;
+                }
+                if (!cache.containsKey(i) && !inFlight.contains(i)) {
+                    return i;
+                }
             }
         }
         return -1;
     }
 
     private void trim() {
-        long base = lastRead / BLOCK;
-        Iterator<java.util.Map.Entry<Long, Blk>> it = cache.entrySet().iterator();
+        int budget = aheadBudget();
+        Iterator<Map.Entry<Long, Blk>> it = cache.entrySet().iterator();
         while (it.hasNext()) {
-            java.util.Map.Entry<Long, Blk> e = it.next();
+            Map.Entry<Long, Blk> e = it.next();
             long k = e.getKey();
-            if (k < base - BEHIND || k > base + AHEAD + 2) {
+            boolean keep = false;
+            for (Cursor c : cursors) {
+                long base = c.pos / BLOCK;
+                if (k >= base - BEHIND && k <= base + budget + 2 || k == c.wanted) {
+                    keep = true;
+                    break;
+                }
+            }
+            if (!keep) {
                 e.getValue().file.delete();
                 it.remove();
             }
@@ -244,7 +381,7 @@ final class RangeSource extends MediaDataSource {
                 idx = next();
                 while (idx < 0 && !closed) {
                     try {
-                        lock.wait();
+                        lock.wait(1000);
                     } catch (InterruptedException e) {
                         return;
                     }
@@ -294,25 +431,6 @@ final class RangeSource extends MediaDataSource {
         }
     }
 
-    /** Bytes per second received over the last few seconds (0 until there is data). */
-    long rate() {
-        synchronized (lock) {
-            long now = System.currentTimeMillis();
-            while (!samples.isEmpty() && now - samples.peekFirst()[0] > RATE_WINDOW_MS) {
-                samples.removeFirst();
-            }
-            if (samples.isEmpty()) {
-                return 0;
-            }
-            long sum = 0;
-            for (long[] s : samples) {
-                sum += s[1];
-            }
-            long span = Math.max(1000, now - samples.peekFirst()[0]);
-            return sum * 1000 / span;
-        }
-    }
-
     private void clearDir() {
         File[] files = dir.listFiles();
         if (files != null) {
@@ -329,7 +447,10 @@ final class RangeSource extends MediaDataSource {
 
     // ---------------------------------------------------------------- one ranged HTTP request
 
-    /** One ranged GET; returns the bytes read (0 or -1 past the end) and learns the total size. */
+    /**
+     * One ranged GET; returns the bytes read (-1 past the end) and learns the total size. A piece that
+     * ends early (the phone or the Wi-Fi dropped it) is an error, so it is retried and never kept.
+     */
     private int fetch(long start, byte[] out, int len) throws IOException {
         try (Socket s = new Socket()) {
             s.connect(new InetSocketAddress(addr, port), 3000);
@@ -373,6 +494,7 @@ final class RangeSource extends MediaDataSource {
                     total = contentLength;
                 }
             }
+            long expected = total >= 0 ? Math.min(len, total - start) : len;
             int got = 0;
             while (got < len) {
                 int n = in.read(out, got, len - got);
@@ -380,6 +502,9 @@ final class RangeSource extends MediaDataSource {
                     break;
                 }
                 got += n;
+            }
+            if (got < expected) {
+                throw new IOException("The phone sent only " + got + " of " + expected + " bytes");
             }
             return got;
         } catch (NumberFormatException e) {
