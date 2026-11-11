@@ -259,6 +259,21 @@ final class LinkServer {
                 } else {
                     upload(s, in, length, fileName);
                 }
+            } else if ("POST".equals(method) && "/play".equals(path)) {
+                if (length < 0 || length > MAX_BODY) {
+                    reply(s, 400, "text/plain", "Too long.");
+                    return;
+                }
+                int gate = check(pin);
+                if (gate == 429) {
+                    reply(s, 429, "text/plain", "Too many wrong PINs. Wait a minute.");
+                    return;
+                }
+                if (gate != 0) {
+                    reply(s, 403, "text/plain", "Wrong PIN.");
+                    return;
+                }
+                play(s, readBody(in, (int) length));
             } else {
                 reply(s, 404, "text/plain", "Not found");
             }
@@ -467,6 +482,37 @@ final class LinkServer {
                 part.delete();
             }
         }
+    }
+
+    // ---------------------------------------------------------------- video that stays on the phone
+
+    /**
+     * The ARC phone app asks the TV to play a file it serves itself. The TV only ever connects back to
+     * the address that sent this request, on the port and path given, with the token given.
+     */
+    private void play(Socket s, String body) throws IOException {
+        String port = form(body, "port");
+        String path = form(body, "path");
+        String token = form(body, "token");
+        int portNumber;
+        try {
+            portNumber = Integer.parseInt(port);
+        } catch (NumberFormatException e) {
+            portNumber = 0;
+        }
+        if (portNumber < 1024 || portNumber > 65535 || !path.matches("/[A-Za-z0-9/_.~%-]{1,200}")
+                || !token.matches("[A-Za-z0-9]{8,64}")) {
+            reply(s, 400, "text/plain", "Bad play request.");
+            return;
+        }
+        app.startActivity(new Intent(app, PlayerActivity.class)
+                .putExtra(PlayerActivity.EXTRA_HOST, s.getInetAddress().getHostAddress())
+                .putExtra(PlayerActivity.EXTRA_PORT, portNumber)
+                .putExtra(PlayerActivity.EXTRA_PATH, path)
+                .putExtra(PlayerActivity.EXTRA_TOKEN, token)
+                .putExtra(PlayerActivity.EXTRA_TITLE, decode(form(body, "title")))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        reply(s, 200, "text/plain", "Playing on the TV.");
     }
 
     // ---------------------------------------------------------------- opening links

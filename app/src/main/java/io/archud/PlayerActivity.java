@@ -4,31 +4,38 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.media.MediaPlayer;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.KeyEvent;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.TextView;
-import android.widget.VideoView;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.Locale;
 
 /**
- * Plays a video sent from a phone through ARC LINK. The file lives in the app's private cache and is
- * deleted when this screen closes (BACK), so it never fills the TV's small storage.
- * Remote: OK = pause/play, LEFT/RIGHT = 10 s, UP/DOWN = 1 min, BACK = close.
+ * ARC PLAYER: plays a video sent from a phone through ARC LINK, either a small file kept in the app's
+ * private cache (deleted when this screen closes) or a video that stays on the phone and is read over
+ * the home network (see RangeSource). Remote: OK = pause/play, LEFT/RIGHT = 10 s, UP/DOWN = 1 min,
+ * BACK = close.
  */
-public class PlayerActivity extends Activity {
+public class PlayerActivity extends Activity implements SurfaceHolder.Callback {
     static final String EXTRA_FILE = "file";
     static final String EXTRA_TITLE = "title";
+    static final String EXTRA_HOST = "host";
+    static final String EXTRA_PORT = "port";
+    static final String EXTRA_PATH = "path";
+    static final String EXTRA_TOKEN = "token";
 
     private static final int CYAN = 0xFF50DCFF;
     private static final int WHITE = 0xFFEBFAFF;
@@ -39,14 +46,20 @@ public class PlayerActivity extends Activity {
     private static volatile String currentPath;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private VideoView video;
+    private FrameLayout root;
+    private SurfaceView surface;
     private LinearLayout overlay;
     private ProgressBar bar;
     private TextView title;
     private TextView time;
     private TextView message;
-    private File file;
+    private MediaPlayer player;
+    private boolean surfaceReady;
+    private boolean prepared;
     private boolean failed;
+    private int generation;
+    private File file;
+    private Intent pending;
 
     private final Runnable hideOverlay = new Runnable() {
         @Override
@@ -63,7 +76,7 @@ public class PlayerActivity extends Activity {
         }
     };
 
-    /** Absolute path of the video on screen, or null. LinkServer keeps this file when cleaning up. */
+    /** Absolute path of the stored video on screen, or null. LinkServer keeps this file when cleaning up. */
     static String current() {
         return currentPath;
     }
@@ -74,11 +87,12 @@ public class PlayerActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         float px = getResources().getDisplayMetrics().widthPixels / 1280f;
 
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         root.setBackgroundColor(Color.BLACK);
 
-        video = new VideoView(this);
-        root.addView(video, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,
+        surface = new SurfaceView(this);
+        surface.getHolder().addCallback(this);
+        root.addView(surface, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER));
 
         overlay = new LinearLayout(this);
@@ -104,47 +118,140 @@ public class PlayerActivity extends Activity {
                 FrameLayout.LayoutParams.MATCH_PARENT, Gravity.CENTER));
 
         setContentView(root);
-
-        video.setOnPreparedListener(mp -> {
-            video.start();
-            showOverlay();
-        });
-        video.setOnCompletionListener(mp -> finish());
-        video.setOnErrorListener((mp, what, extra) -> {
-            fail("This TV could not play this video.\nIts format or sound track is not supported.\n\n"
-                    + "Press BACK to close.");
-            return true;
-        });
-        load(getIntent());
+        pending = getIntent();
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        load(intent);
+        pending = intent;
+        startPending();
     }
 
-    /** Starts the file named in the intent and removes the one played before. */
-    private void load(Intent intent) {
-        File previous = file;
-        String path = intent.getStringExtra(EXTRA_FILE);
-        File next = path == null ? null : new File(path);
-        if (next == null || !insideCache(next) || !next.isFile()) {
-            fail("Nothing to play.\n\nPress BACK to close.");
+    // ---------------------------------------------------------------- surface
+
+    @Override
+    public void surfaceCreated(SurfaceHolder holder) {
+        surfaceReady = true;
+        if (player != null) {
+            player.setDisplay(holder);
+        }
+        startPending();
+    }
+
+    @Override
+    public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+        // nothing to do: the size is set from the video's own size
+    }
+
+    @Override
+    public void surfaceDestroyed(SurfaceHolder holder) {
+        surfaceReady = false;
+        if (player != null) {
+            player.setDisplay(null);
+        }
+    }
+
+    // ---------------------------------------------------------------- playback
+
+    /** Starts the video named in the pending intent, replacing the one before. */
+    private void startPending() {
+        final Intent intent = pending;
+        if (intent == null || !surfaceReady) {
             return;
         }
-        file = next;
-        currentPath = next.getAbsolutePath();
+        pending = null;
+        File previous = file;
+        releasePlayer();
         failed = false;
         message.setVisibility(View.GONE);
         title.setText(intent.getStringExtra(EXTRA_TITLE));
-        video.setVideoPath(next.getAbsolutePath());
-        if (previous != null && !previous.equals(next)) {
+        final int mine = ++generation;
+
+        final MediaPlayer mp = new MediaPlayer();
+        player = mp;
+        mp.setDisplay(surface.getHolder());
+        mp.setOnPreparedListener(p -> {
+            prepared = true;
+            p.start();
+            showOverlay();
+        });
+        mp.setOnVideoSizeChangedListener((p, w, h) -> fit(w, h));
+        mp.setOnCompletionListener(p -> finish());
+        mp.setOnErrorListener((p, what, extra) -> {
+            fail("This TV could not play this video.\nIts format or sound track is not supported.\n\n"
+                    + "Press BACK to close.");
+            return true;
+        });
+
+        String path = intent.getStringExtra(EXTRA_FILE);
+        if (path != null) {
+            File next = new File(path);
+            if (!insideCache(next) || !next.isFile()) {
+                fail("Nothing to play.\n\nPress BACK to close.");
+                return;
+            }
+            file = next;
+            currentPath = next.getAbsolutePath();
+            try {
+                mp.setDataSource(next.getAbsolutePath());
+                mp.prepareAsync();
+            } catch (IOException | RuntimeException e) {
+                fail("Could not open this video.\n\nPress BACK to close.");
+            }
+        } else {
+            file = null;
+            currentPath = null;
+            final String host = intent.getStringExtra(EXTRA_HOST);
+            final int port = intent.getIntExtra(EXTRA_PORT, 0);
+            final String remotePath = intent.getStringExtra(EXTRA_PATH);
+            final String token = intent.getStringExtra(EXTRA_TOKEN);
+            message.setText("Connecting to the phone...");
+            message.setVisibility(View.VISIBLE);
+            new Thread(() -> {
+                try {
+                    final RangeSource source = new RangeSource(host, port, remotePath, token);
+                    runOnUiThread(() -> {
+                        if (mine != generation || player != mp) {
+                            source.close();
+                            return;
+                        }
+                        message.setVisibility(View.GONE);
+                        try {
+                            mp.setDataSource(source);
+                            mp.prepareAsync();
+                        } catch (RuntimeException e) {
+                            fail("Could not open this video.\n\nPress BACK to close.");
+                        }
+                    });
+                } catch (IOException | RuntimeException e) {
+                    runOnUiThread(() -> {
+                        if (mine == generation) {
+                            fail("Could not reach the phone.\nKeep the ARC app open on the phone.\n\n"
+                                    + "Press BACK to close.");
+                        }
+                    });
+                }
+            }, "arc-player-open").start();
+        }
+        if (previous != null && !previous.equals(file)) {
             previous.delete();
         }
         handler.removeCallbacks(ticker);
         handler.post(ticker);
+    }
+
+    private void releasePlayer() {
+        prepared = false;
+        if (player != null) {
+            try {
+                player.release();
+            } catch (RuntimeException ignored) {
+                // already released
+            }
+            player = null;
+        }
     }
 
     private boolean insideCache(File f) {
@@ -156,6 +263,18 @@ public class PlayerActivity extends Activity {
         }
     }
 
+    private void fit(int w, int h) {
+        int rw = root.getWidth();
+        int rh = root.getHeight();
+        if (w <= 0 || h <= 0 || rw <= 0 || rh <= 0) {
+            return;
+        }
+        float scale = Math.min((float) rw / w, (float) rh / h);
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(Math.round(w * scale),
+                Math.round(h * scale), Gravity.CENTER);
+        surface.setLayoutParams(lp);
+    }
+
     private void fail(String text) {
         failed = true;
         message.setText(text);
@@ -163,9 +282,11 @@ public class PlayerActivity extends Activity {
         overlay.setVisibility(View.GONE);
     }
 
+    // ---------------------------------------------------------------- remote control
+
     @Override
     public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (failed) {
+        if (failed || !prepared) {
             return super.onKeyDown(keyCode, event);
         }
         switch (keyCode) {
@@ -173,19 +294,19 @@ public class PlayerActivity extends Activity {
             case KeyEvent.KEYCODE_ENTER:
             case KeyEvent.KEYCODE_SPACE:
             case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
-                if (video.isPlaying()) {
-                    video.pause();
+                if (player.isPlaying()) {
+                    player.pause();
                 } else {
-                    video.start();
+                    player.start();
                 }
                 showOverlay();
                 return true;
             case KeyEvent.KEYCODE_MEDIA_PLAY:
-                video.start();
+                player.start();
                 showOverlay();
                 return true;
             case KeyEvent.KEYCODE_MEDIA_PAUSE:
-                video.pause();
+                player.pause();
                 showOverlay();
                 return true;
             case KeyEvent.KEYCODE_DPAD_RIGHT:
@@ -208,12 +329,12 @@ public class PlayerActivity extends Activity {
     }
 
     private void seek(int deltaMs) {
-        int total = video.getDuration();
-        int target = Math.max(0, video.getCurrentPosition() + deltaMs);
+        int total = player.getDuration();
+        int target = Math.max(0, player.getCurrentPosition() + deltaMs);
         if (total > 0) {
             target = Math.min(target, total - 500);
         }
-        video.seekTo(Math.max(0, target));
+        player.seekTo(Math.max(0, target));
         showOverlay();
     }
 
@@ -225,11 +346,14 @@ public class PlayerActivity extends Activity {
     }
 
     private void refresh() {
-        int total = video.getDuration();
-        int pos = video.getCurrentPosition();
+        if (player == null || !prepared) {
+            return;
+        }
+        int total = player.getDuration();
+        int pos = player.getCurrentPosition();
         bar.setProgress(total > 0 ? (int) (1000L * pos / total) : 0);
         time.setText(clock(pos) + " / " + (total > 0 ? clock(total) : "--:--")
-                + (video.isPlaying() ? "" : "   PAUSED"));
+                + (player.isPlaying() ? "" : "   PAUSED"));
     }
 
     private static String clock(int ms) {
@@ -249,8 +373,9 @@ public class PlayerActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        generation++;
         handler.removeCallbacksAndMessages(null);
-        video.stopPlayback();
+        releasePlayer();
         if (file != null) {
             file.delete();
         }
