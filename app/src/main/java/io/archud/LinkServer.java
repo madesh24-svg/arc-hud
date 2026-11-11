@@ -10,6 +10,8 @@ import android.widget.Toast;
 
 import java.io.BufferedInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -42,6 +44,11 @@ final class LinkServer {
     private static final int MAX_BODY = 4096;
     private static final int MAX_FAILS = 5;
     private static final long LOCK_MS = 60_000;
+    /** Largest video accepted; the TV's free storage usually limits it first. */
+    private static final long MAX_VIDEO = 450L * 1024 * 1024;
+    /** Space always left free on the TV after a video is stored. */
+    private static final long RESERVE = 100L * 1024 * 1024;
+    static final String VIDEO_PREFIX = "arclink-video-";
 
     private static LinkServer instance;
 
@@ -51,6 +58,7 @@ final class LinkServer {
     private final ExecutorService pool = Executors.newFixedThreadPool(2);
     private volatile boolean closed;
     private int fails;
+    private boolean uploading;
     private long lockedUntil;
 
     private LinkServer(Context app, ServerSocket server) {
@@ -66,6 +74,7 @@ final class LinkServer {
         boolean wanted = Prefs.get(app).getBoolean(Prefs.LINK_ON, false);
         if (wanted && instance == null) {
             try {
+                cleanStale(app);
                 ServerSocket ss = new ServerSocket(PORT);
                 instance = new LinkServer(app, ss);
                 Thread t = new Thread(instance::acceptLoop, "arclink-accept");
@@ -185,8 +194,10 @@ final class LinkServer {
                 reply(s, 400, "text/plain", "Bad request");
                 return;
             }
-            int length = 0;
+            long length = 0;
+            long size = 0;
             String pin = null;
+            String fileName = null;
             for (int i = 1; i < lines.length; i++) {
                 int c = lines[i].indexOf(':');
                 if (c <= 0) {
@@ -196,12 +207,20 @@ final class LinkServer {
                 String value = lines[i].substring(c + 1).trim();
                 if ("content-length".equals(name)) {
                     try {
-                        length = Integer.parseInt(value);
+                        length = Long.parseLong(value);
                     } catch (NumberFormatException e) {
                         length = -1;
                     }
                 } else if ("x-pin".equals(name)) {
                     pin = value;
+                } else if ("x-name".equals(name)) {
+                    fileName = value;
+                } else if ("x-size".equals(name)) {
+                    try {
+                        size = Long.parseLong(value);
+                    } catch (NumberFormatException e) {
+                        size = -1;
+                    }
                 }
             }
             String method = request[0];
@@ -222,8 +241,24 @@ final class LinkServer {
                     reply(s, 403, "text/plain", "Wrong PIN.");
                     return;
                 }
-                String body = readBody(in, length);
+                String body = readBody(in, (int) length);
                 open(s, form(body, "url"));
+            } else if ("POST".equals(method) && ("/videocheck".equals(path) || "/video".equals(path))) {
+                int gate = check(pin);
+                if (gate == 429) {
+                    reply(s, 429, "text/plain", "Too many wrong PINs. Wait a minute.");
+                    return;
+                }
+                if (gate != 0) {
+                    reply(s, 403, "text/plain", "Wrong PIN.");
+                    return;
+                }
+                if ("/videocheck".equals(path)) {
+                    String problem = videoRoom(size);
+                    reply(s, problem == null ? 200 : 413, "text/plain", problem == null ? "OK" : problem);
+                } else {
+                    upload(s, in, length, fileName);
+                }
             } else {
                 reply(s, 404, "text/plain", "Not found");
             }
@@ -296,7 +331,7 @@ final class LinkServer {
 
     private static void reply(Socket s, int code, String type, String body) throws IOException {
         String status = code == 200 ? "OK" : (code == 400 ? "Bad Request" : (code == 403 ? "Forbidden"
-                : (code == 404 ? "Not Found" : (code == 429 ? "Too Many Requests" : "Error"))));
+                : (code == 404 ? "Not Found" : (code == 429 ? "Too Many Requests" : (code == 413 ? "Payload Too Large" : "Error")))));
         byte[] data = body.getBytes(StandardCharsets.UTF_8);
         String head = "HTTP/1.1 " + code + " " + status + "\r\nContent-Type: " + type
                 + "\r\nContent-Length: " + data.length
@@ -305,6 +340,133 @@ final class LinkServer {
         out.write(head.getBytes(StandardCharsets.US_ASCII));
         out.write(data);
         out.flush();
+    }
+
+    // ---------------------------------------------------------------- video upload
+
+    /** Deletes video files left behind earlier, except the one the player is showing. */
+    static void cleanStale(Context c) {
+        File[] files = c.getCacheDir().listFiles();
+        if (files == null) {
+            return;
+        }
+        String playing = PlayerActivity.current();
+        for (File f : files) {
+            if (f.getName().startsWith(VIDEO_PREFIX) && !f.getAbsolutePath().equals(playing)) {
+                f.delete();
+            }
+        }
+    }
+
+    /** null = a video of this size can be stored now; otherwise what to tell the phone. */
+    private String videoRoom(long size) {
+        if (size <= 0) {
+            return "Empty or unknown file size.";
+        }
+        if (size > MAX_VIDEO) {
+            return "Too big. The TV can take about " + (MAX_VIDEO / 1048576) + " MB at most.";
+        }
+        synchronized (this) {
+            if (uploading) {
+                return "Another upload is still running.";
+            }
+            cleanStale(app);
+        }
+        long free = app.getCacheDir().getUsableSpace();
+        if (size + RESERVE > free) {
+            return "Not enough free space on the TV (" + (free / 1048576) + " MB free). "
+                    + "Press BACK on the TV to close the current video, or send a smaller file.";
+        }
+        return null;
+    }
+
+    private static String videoExtension(String rawName) {
+        String name = decode(rawName);
+        int dot = name.lastIndexOf('.');
+        String ext = dot >= 0 ? name.substring(dot + 1).toLowerCase(Locale.US) : "";
+        for (String ok : new String[] {"mp4", "mkv", "webm", "mov", "m4v", "3gp", "avi", "ts"}) {
+            if (ok.equals(ext)) {
+                return ext;
+            }
+        }
+        return "mp4";
+    }
+
+    private static String decode(String raw) {
+        if (raw == null) {
+            return "video";
+        }
+        try {
+            String s = URLDecoder.decode(raw, "UTF-8");
+            StringBuilder out = new StringBuilder();
+            for (int i = 0; i < s.length() && out.length() < 80; i++) {
+                char ch = s.charAt(i);
+                out.append(ch < 32 ? ' ' : ch);
+            }
+            return out.length() == 0 ? "video" : out.toString();
+        } catch (IOException | RuntimeException e) {
+            return "video";
+        }
+    }
+
+    private void upload(Socket s, InputStream in, long length, String rawName) throws IOException {
+        String problem = videoRoom(length);
+        if (problem != null) {
+            reply(s, 413, "text/plain", problem);
+            return;
+        }
+        synchronized (this) {
+            if (uploading) {
+                reply(s, 413, "text/plain", "Another upload is still running.");
+                return;
+            }
+            uploading = true;
+        }
+        long stamp = System.currentTimeMillis();
+        File part = new File(app.getCacheDir(), VIDEO_PREFIX + stamp + ".part");
+        File done = new File(app.getCacheDir(), VIDEO_PREFIX + stamp + "." + videoExtension(rawName));
+        boolean ok = false;
+        try {
+            s.setSoTimeout(30000);
+            try (FileOutputStream out = new FileOutputStream(part)) {
+                byte[] buf = new byte[65536];
+                long left = length;
+                while (left > 0) {
+                    int n = in.read(buf, 0, (int) Math.min(buf.length, left));
+                    if (n < 0) {
+                        break;
+                    }
+                    out.write(buf, 0, n);
+                    left -= n;
+                }
+                if (left > 0) {
+                    throw new IOException("upload ended early");
+                }
+            }
+            if (!part.renameTo(done)) {
+                throw new IOException("could not store the file");
+            }
+            ok = true;
+            app.startActivity(new Intent(app, PlayerActivity.class)
+                    .putExtra(PlayerActivity.EXTRA_FILE, done.getAbsolutePath())
+                    .putExtra(PlayerActivity.EXTRA_TITLE, decode(rawName))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            reply(s, 200, "text/plain", "Playing on the TV.");
+        } catch (IOException e) {
+            part.delete();
+            try {
+                reply(s, 500, "text/plain", "Upload failed: " + e.getMessage());
+            } catch (IOException ignored) {
+                // the phone has already gone
+            }
+        } finally {
+            synchronized (this) {
+                uploading = false;
+            }
+            if (!ok) {
+                part.delete();
+            }
+        }
     }
 
     // ---------------------------------------------------------------- opening links

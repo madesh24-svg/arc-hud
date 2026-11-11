@@ -81,6 +81,16 @@
             android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen"
             android:windowSoftInputMode="stateHidden|adjustResize" />
 
+        <!-- ARC LINK video player: shows a video sent from a phone, deletes the file when closed. -->
+        <activity
+            android:name=".PlayerActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            android:label="ARC PLAYER"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
+
         <activity
             android:name=".DevicesActivity"
             android:exported="false"

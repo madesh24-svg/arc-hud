@@ -15,7 +15,9 @@
   button { width: 100%; margin-top: 20px; padding: 16px; font: inherit; font-weight: bold; color: #02081a;
            background: #50dcff; border: 0; border-radius: 6px; }
   #msg { margin-top: 18px; min-height: 24px; color: #50dcff; }
-  #msg.bad { color: #ff7a7a; }
+  #msg.bad, #vmsg.bad { color: #ff7a7a; }
+  #vmsg { margin-top: 12px; min-height: 24px; color: #50dcff; }
+  progress { width: 100%; margin-top: 16px; }
 </style>
 </head>
 <body>
@@ -28,6 +30,11 @@
   <input id="url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" placeholder="Paste a link here">
   <button id="go">SEND TO TV</button>
   <div id="msg"></div>
+  <label for="file">Video from this phone (up to about 450 MB)</label>
+  <input id="file" type="file" accept="video/*">
+  <button id="up">UPLOAD AND PLAY ON TV</button>
+  <progress id="prog" max="100" value="0" hidden></progress>
+  <div id="vmsg"></div>
 </main>
 <script>
   var pin = document.getElementById('pin');
@@ -48,6 +55,41 @@
         say(t, !r.ok);
       });
     }).catch(function () { say('Could not reach the TV.', true); });
+  };
+  var file = document.getElementById('file');
+  var vmsg = document.getElementById('vmsg');
+  var prog = document.getElementById('prog');
+  var up = document.getElementById('up');
+  function vsay(text, bad) { vmsg.textContent = text; vmsg.className = bad ? 'bad' : ''; }
+  function post(path, headers, body, onprogress) {
+    return new Promise(function (resolve) {
+      var x = new XMLHttpRequest();
+      x.open('POST', path);
+      for (var k in headers) { x.setRequestHeader(k, headers[k]); }
+      if (onprogress) { x.upload.onprogress = onprogress; }
+      x.onload = function () { resolve({ ok: x.status === 200, text: x.responseText }); };
+      x.onerror = function () { resolve({ ok: false, text: 'Lost contact with the TV.' }); };
+      x.send(body);
+    });
+  }
+  up.onclick = function () {
+    var f = file.files[0];
+    if (!f) { vsay('Choose a video first.', true); return; }
+    var h = { 'X-Pin': pin.value.trim(), 'X-Name': encodeURIComponent(f.name), 'X-Size': String(f.size) };
+    up.disabled = true;
+    vsay('Checking space on the TV...', false);
+    post('/videocheck', h, '').then(function (r) {
+      if (!r.ok) { vsay(r.text, true); up.disabled = false; return; }
+      try { localStorage.setItem('arcpin', pin.value.trim()); } catch (e) { }
+      prog.hidden = false; prog.value = 0;
+      vsay('Sending ' + Math.round(f.size / 1048576) + ' MB. Keep this page open.', false);
+      return post('/video', h, f, function (e) {
+        if (e.lengthComputable) { prog.value = Math.round(100 * e.loaded / e.total); }
+      }).then(function (r2) {
+        prog.hidden = true; up.disabled = false;
+        vsay(r2.text, !r2.ok);
+      });
+    });
   };
 </script>
 </body>
