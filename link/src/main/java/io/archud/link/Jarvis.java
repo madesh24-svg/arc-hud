@@ -309,8 +309,7 @@ final class Jarvis {
             Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                     .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-IN")
-                    .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                    .putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+                    .putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 5)
                     .putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, app.getPackageName());
             listening = true;
             recognizer.startListening(i);
