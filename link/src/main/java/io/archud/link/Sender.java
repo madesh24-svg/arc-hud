@@ -39,9 +39,10 @@ final class Sender {
         for (int i = 1; i < uris.size() && i < PhotoActivity.MAX_PHOTOS; i++) {
             clip.addItem(new ClipData.Item(uris.get(i)));
         }
-        c.startActivity(new Intent(c, PhotoActivity.class)
-                .setClipData(clip)
-                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK));
+        Intent open = new Intent(c, PhotoActivity.class);
+        open.setClipData(clip);
+        open.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        c.startActivity(open);
     }
 
     /** First web address inside shared text, or null. */
