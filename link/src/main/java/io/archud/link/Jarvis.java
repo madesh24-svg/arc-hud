@@ -481,7 +481,25 @@ final class Jarvis {
         }
         String tv = Store.host(app);
         String pin = Store.pin(app);
-        try {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                dispatch(c, tv, pin);
+                return;
+            } catch (IOException e) {
+                if (attempt == 0) {
+                    try {
+                        Thread.sleep(1500);
+                    } catch (InterruptedException ie) {
+                        return;
+                    }
+                }
+            }
+        }
+        say("I could not reach the TV.");
+    }
+
+    private static void dispatch(JarvisBrain.Cmd c, String tv, String pin) throws IOException {
+        {
             switch (c.type) {
                 case JarvisBrain.OPEN_APP:
                     openApp(tv, pin, c);
@@ -506,8 +524,6 @@ final class Jarvis {
                 default:
                     break;
             }
-        } catch (IOException e) {
-            say("I could not reach the TV.");
         }
     }
 

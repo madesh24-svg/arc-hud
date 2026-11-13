@@ -82,10 +82,24 @@ final class LinkServer {
     static synchronized void sync(Context context) {
         Context app = context.getApplicationContext();
         boolean wanted = Prefs.get(app).getBoolean(Prefs.LINK_ON, false);
+        open(app, wanted);
+        // the service is what keeps the process alive when another app is in front
+        if (wanted) {
+            LinkService.start(app);
+        } else {
+            LinkService.stop(app);
+        }
+    }
+
+    /** Opens or closes the listening socket only; LinkService calls this one. */
+    static synchronized void open(Context context, boolean wanted) {
+        Context app = context.getApplicationContext();
         if (wanted && instance == null) {
             try {
                 cleanStale(app);
-                ServerSocket ss = new ServerSocket(PORT);
+                ServerSocket ss = new ServerSocket();
+                ss.setReuseAddress(true);
+                ss.bind(new java.net.InetSocketAddress(PORT));
                 instance = new LinkServer(app, ss);
                 Thread t = new Thread(instance::acceptLoop, "arclink-accept");
                 t.setDaemon(true);
@@ -118,9 +132,16 @@ final class LinkServer {
             try {
                 final Socket s = server.accept();
                 pool.execute(() -> handle(s));
-            } catch (IOException e) {
-                return;
-            } catch (RuntimeException e) {
+            } catch (IOException | RuntimeException e) {
+                if (!closed) {
+                    // the socket died on its own (network change): forget it so LinkService reopens it
+                    synchronized (LinkServer.class) {
+                        if (instance == this) {
+                            instance = null;
+                        }
+                    }
+                    close();
+                }
                 return;
             }
         }

@@ -17,7 +17,10 @@
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- ARC LINK: when switched on in ARC SETTINGS the app listens on port 8765 for PIN-protected requests
-         from the local network only (enforced in LinkServer.java). Needs no extra permission. -->
+         from the local network only (enforced in LinkServer.java). It runs as a foreground service so
+         Android keeps it alive behind other apps, and is started again when the TV boots. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <!-- Device list: local network only (enforced in NetPolicy.java); multicast for UPnP discovery. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
@@ -141,6 +144,18 @@
                 <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
+
+        <receiver
+            android:name=".BootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".LinkService"
+            android:exported="false" />
 
         <service
             android:name=".HudDream"
