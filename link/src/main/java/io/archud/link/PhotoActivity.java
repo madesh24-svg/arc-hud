@@ -1,25 +1,35 @@
 package io.archud.link;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.ClipData;
+import android.content.ContentUris;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.graphics.Typeface;
 import android.media.ExifInterface;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.MediaStore;
 import android.util.LruCache;
 import android.view.Gravity;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.widget.AbsListView;
+import android.widget.AdapterView;
+import android.widget.BaseAdapter;
 import android.widget.Button;
-import android.widget.HorizontalScrollView;
+import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -38,31 +48,41 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
- * ARC PHOTOS on the phone: a pager over the shared photos. The photo on this screen is the photo on the TV.
- * Each photo is shrunk here to a TV-sized JPEG (long edge 1280 px) and sent to the TV a few at a time
- * (the one shown, the next two and the previous one), so the next swipe is instant. The originals never
- * leave the phone. The TV is polled so that LEFT/RIGHT on the TV remote moves this pager too.
+ * ARC PHOTOS on the phone. Two ways in: the whole phone gallery as a scrolling grid (the PICK PHOTOS button),
+ * or the photos chosen in the phone's share sheet. Tap a photo and it goes on the TV and stays there until
+ * another is chosen. Each photo is shrunk here to a TV-sized JPEG (long edge 1280 px) and sent to the TV a few
+ * at a time (the one shown, the next two and the previous one); the originals never leave the phone. The TV is
+ * polled so that LEFT/RIGHT on the TV remote moves the selection here too. Optional slideshow: long-press photos
+ * to pick a set; with none picked it plays the whole gallery.
  */
 public class PhotoActivity extends Activity {
     static final int MAX_PHOTOS = 200;
+    /** Start this screen with this extra set to true to browse the whole phone gallery. */
+    static final String EXTRA_GALLERY = "gallery";
+    /** The TV counts photos up to 9999. */
+    private static final int GALLERY_MAX = 9000;
     private static final int MAX_EDGE = 1280;
     /** The TV keeps photos this close (around the album) to the one on screen; see ImageStore on the TV. */
     private static final int TV_KEEP = 4;
     private static final long POLL_MS = 1500;
     private static final long[] INTERVALS = {2000, 4000, 8000};
+    private static final int REQUEST_GALLERY = 21;
 
     private static final int CYAN = 0xFF50DCFF;
+    private static final int GOLD = 0xFFFFB93C;
     private static final int WHITE = 0xFFEBFAFF;
     private static final int DIM = 0xFF96C8E1;
     private static final int INK = 0xFF02081A;
+    private static final int CELL = 0xFF0A2236;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    /** Makes the small strip thumbnails, apart from the worker so sending to the TV is never held up. */
+    /** Makes the grid thumbnails and reads the gallery, apart from the worker so sending is never held up. */
     private final ExecutorService thumbMaker = Executors.newFixedThreadPool(2);
-    private final LruCache<Integer, Bitmap> thumbCache = new LruCache<Integer, Bitmap>(8 * 1024 * 1024) {
+    private final LruCache<Integer, Bitmap> thumbCache = new LruCache<Integer, Bitmap>(16 * 1024 * 1024) {
         @Override
         protected int sizeOf(Integer key, Bitmap value) {
             return value.getByteCount();
@@ -79,29 +99,34 @@ public class PhotoActivity extends Activity {
     private volatile boolean polling;
     /** The album index last confirmed on the TV screen, or -1. Written on the worker thread. */
     private volatile int lastShown = -1;
+    /** The grid rows on screen, so thumbnails for rows that have scrolled away are not made. */
+    private volatile int visFirst = 0;
+    private volatile int visLast = 40;
     private String host;
     private String pin;
-    private int pos;
+    /** The photo on the TV (album index), or -1 before the first pick. */
+    private int pos = -1;
+    private boolean galleryMode;
     private boolean slideshow;
     private int intervalIdx = 1;
     private float density;
+    /** Photos picked for the slideshow (long-press). With none picked the slideshow plays everything. */
+    private boolean[] picked = new boolean[0];
+    private int pickedCount;
 
     private ImageView preview;
     private TextView counter;
     private TextView status;
     private Button slideButton;
     private Button intervalButton;
-    private HorizontalScrollView strip;
-    private LinearLayout stripRow;
-    private ImageView[] thumbViews = new ImageView[0];
-    /** Photos left out of the slideshow (long-press a thumbnail). They can still be shown by tapping them. */
-    private boolean[] skipped = new boolean[0];
+    private GridView grid;
+    private BaseAdapter adapter;
 
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
             if (slideshow) {
-                go(nextIncluded(pos));
+                go(nextInSlideshow(pos));
                 handler.postDelayed(this, INTERVALS[intervalIdx]);
             }
         }
@@ -123,8 +148,16 @@ public class PhotoActivity extends Activity {
         host = Store.host(this);
         pin = Store.pin(this);
         buildScreen();
-        if (!Store.paired(this) || !load(getIntent())) {
-            Sender.say(this, "No photos to send, or the TV is not paired yet.");
+        if (!Store.paired(this)) {
+            Sender.say(this, "Pair with the TV first.");
+            finish();
+            return;
+        }
+        if (getIntent().getBooleanExtra(EXTRA_GALLERY, false)) {
+            galleryMode = true;
+            loadGallery();
+        } else if (!loadShared(getIntent())) {
+            Sender.say(this, "No photos to send.");
             finish();
             return;
         }
@@ -135,7 +168,14 @@ public class PhotoActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        load(intent);
+        if (intent.getBooleanExtra(EXTRA_GALLERY, false)) {
+            if (!galleryMode || uris.isEmpty()) {
+                galleryMode = true;
+                loadGallery();
+            }
+        } else if (loadShared(intent)) {
+            galleryMode = false;
+        }
     }
 
     @Override
@@ -147,10 +187,10 @@ public class PhotoActivity extends Activity {
         super.onDestroy();
     }
 
-    // ---------------------------------------------------------------- loading and moving
+    // ---------------------------------------------------------------- getting the photos
 
-    /** Takes the photos from the intent and shows the first. False when the intent holds none. */
-    private boolean load(Intent in) {
+    /** Takes the photos chosen in the share sheet and shows the first. False when the intent holds none. */
+    private boolean loadShared(Intent in) {
         List<Uri> list = new ArrayList<>();
         ClipData clip = in.getClipData();
         if (clip != null) {
@@ -164,11 +204,80 @@ public class PhotoActivity extends Activity {
         if (list.isEmpty()) {
             return false;
         }
+        applyList(list, true);
+        return true;
+    }
+
+    private String photoPermission() {
+        return Build.VERSION.SDK_INT >= 33 ? Manifest.permission.READ_MEDIA_IMAGES
+                : Manifest.permission.READ_EXTERNAL_STORAGE;
+    }
+
+    /** Lists every photo on the phone, newest first, once the phone's photo permission is given. */
+    private void loadGallery() {
+        if (checkSelfPermission(photoPermission()) != PackageManager.PERMISSION_GRANTED) {
+            status.setText("Allow ARC LINK to see your photos to browse the gallery.");
+            requestPermissions(new String[] {photoPermission()}, REQUEST_GALLERY);
+            return;
+        }
+        status.setText("Reading the gallery...");
+        try {
+            thumbMaker.execute(new Runnable() {
+                @Override
+                public void run() {
+                    final List<Uri> list = new ArrayList<>();
+                    Uri base = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
+                    try (Cursor c = getContentResolver().query(base, new String[] {MediaStore.Images.Media._ID},
+                            null, null, MediaStore.Images.Media.DATE_ADDED + " DESC")) {
+                        if (c != null) {
+                            int col = c.getColumnIndexOrThrow(MediaStore.Images.Media._ID);
+                            while (c.moveToNext() && list.size() < GALLERY_MAX) {
+                                list.add(ContentUris.withAppendedId(base, c.getLong(col)));
+                            }
+                        }
+                    } catch (RuntimeException e) {
+                        // no access: the list stays empty and the screen says so
+                    }
+                    handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (list.isEmpty()) {
+                                status.setText("No photos found. Check that ARC LINK may see photos "
+                                        + "(phone settings, Apps, ARC LINK, Permissions).");
+                            } else {
+                                applyList(list, false);
+                            }
+                        }
+                    });
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            // the screen is closing
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_GALLERY) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                loadGallery();
+            } else {
+                status.setText("ARC LINK cannot see your photos. Allow it in the phone's app settings, "
+                        + "or share photos to ARC LINK from the gallery instead.");
+            }
+        }
+    }
+
+    /** Starts over with this list. When castFirst, the first photo goes on the TV; otherwise the TV is untouched. */
+    private void applyList(List<Uri> list, boolean castFirst) {
         stopSlideshow();
+        gen++;
         uris = list;
-        skipped = new boolean[list.size()];
+        picked = new boolean[list.size()];
+        pickedCount = 0;
+        pos = -1;
         thumbCache.evictAll();
-        rebuildStrip();
         session = String.format(Locale.US, "ph%08x", new SecureRandom().nextInt());
         lastShown = -1;
         synchronized (cache) {
@@ -180,15 +289,26 @@ public class PhotoActivity extends Activity {
                 sent.clear();
             }
         });
-        go(0);
-        return true;
+        adapter.notifyDataSetChanged();
+        updateCounter();
+        if (castFirst) {
+            go(0);
+        } else {
+            status.setText(list.size() + " photos. Tap one to show it on the TV.");
+            preview.setImageDrawable(null);
+        }
     }
+
+    // ---------------------------------------------------------------- moving
 
     private void go(int target) {
         int n = uris.size();
+        if (n == 0) {
+            return;
+        }
         pos = ((target % n) + n) % n;
         updateCounter();
-        updateStrip();
+        updateStrip(slideshow);
         status.setText("Sending to the TV...");
         cast(pos, ++gen, true);
     }
@@ -289,18 +409,15 @@ public class PhotoActivity extends Activity {
     /** Album indexes within this many places of target, counting around the end of the album. */
     private static Set<Integer> near(int target, int n, int keep) {
         Set<Integer> s = new HashSet<>();
-        for (int i = 0; i < n; i++) {
-            int d = Math.abs(i - target);
-            if (Math.min(d, n - d) <= keep) {
-                s.add(i);
-            }
+        for (int d = -keep; d <= keep; d++) {
+            s.add(((target + d) % n + n) % n);
         }
         return s;
     }
 
     // ---------------------------------------------------------------- the TV poll
 
-    /** Asks the TV what it shows, so a remote LEFT/RIGHT on the TV moves this pager too. */
+    /** Asks the TV what it shows, so a remote LEFT/RIGHT on the TV moves the selection here too. */
     private void pollTv() {
         if (polling) {
             return;
@@ -308,29 +425,33 @@ public class PhotoActivity extends Activity {
         polling = true;
         final int g = gen;
         final String sess = session;
-        worker.execute(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    TvClient.Reply r = TvClient.send(host, "/imagestate", pin, new String[0], new byte[0]);
-                    if (!r.ok()) {
-                        return;
-                    }
-                    final String[] t = r.text.split(" ");
-                    final int shownThen = lastShown;
-                    handler.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            applyState(g, sess, t, shownThen);
+        try {
+            worker.execute(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        TvClient.Reply r = TvClient.send(host, "/imagestate", pin, new String[0], new byte[0]);
+                        if (!r.ok()) {
+                            return;
                         }
-                    });
-                } catch (IOException e) {
-                    // the TV is busy or asleep; ask again next time
-                } finally {
-                    polling = false;
+                        final String[] t = r.text.split(" ");
+                        final int shownThen = lastShown;
+                        handler.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                applyState(g, sess, t, shownThen);
+                            }
+                        });
+                    } catch (IOException e) {
+                        // the TV is busy or asleep; ask again next time
+                    } finally {
+                        polling = false;
+                    }
                 }
-            }
-        });
+            });
+        } catch (RejectedExecutionException e) {
+            polling = false;
+        }
     }
 
     private void applyState(int g, String sess, String[] t, int shownThen) {
@@ -341,7 +462,7 @@ public class PhotoActivity extends Activity {
             if (shownThen >= 0) {
                 lastShown = -1;
                 stopSlideshow();
-                status.setText("The TV closed the viewer. Swipe to show the photos again.");
+                status.setText("The TV closed the viewer. Tap a photo to show it again.");
             }
             return;
         }
@@ -360,7 +481,7 @@ public class PhotoActivity extends Activity {
             pos = tvPos;
             lastShown = tvPos;
             updateCounter();
-            updateStrip();
+            updateStrip(true);
             cast(pos, ++gen, false);
         }
     }
@@ -478,87 +599,71 @@ public class PhotoActivity extends Activity {
         });
     }
 
-    // ---------------------------------------------------------------- buttons
+    // ---------------------------------------------------------------- the grid
 
-    /** The next photo after from that is not left out of the slideshow (from itself if all others are). */
-    private int nextIncluded(int from) {
+    /** The next photo for the slideshow: the next picked one, or simply the next when none are picked. */
+    private int nextInSlideshow(int from) {
         int n = uris.size();
+        if (pickedCount == 0) {
+            return from + 1;
+        }
         for (int step = 1; step <= n; step++) {
             int i = (from + step) % n;
-            if (!skipped[i]) {
+            if (picked[i]) {
                 return i;
             }
         }
         return from;
     }
 
-    private int includedCount() {
-        int c = 0;
-        for (boolean s : skipped) {
-            if (!s) {
-                c++;
-            }
-        }
-        return c;
-    }
-
     private void updateCounter() {
         int n = uris.size();
-        int inc = includedCount();
-        counter.setText((pos + 1) + " / " + n + (inc < n ? "   SLIDESHOW: " + inc + " PHOTOS" : ""));
+        String where = pos < 0 ? "PICK A PHOTO" : (pos + 1) + " / " + n;
+        counter.setText(where + (pickedCount > 0 ? "   SLIDESHOW: " + pickedCount + " PICKED" : "   SLIDESHOW: ALL"));
     }
 
-    private void toggleSkip(int i) {
-        if (i < 0 || i >= skipped.length) {
+    private void togglePick(int i) {
+        if (i < 0 || i >= picked.length) {
             return;
         }
-        skipped[i] = !skipped[i];
+        picked[i] = !picked[i];
+        pickedCount += picked[i] ? 1 : -1;
         updateCounter();
-        updateStrip();
+        updateStrip(false);
     }
 
-    /** One thumbnail per photo in a scrolling strip: tap = show on the TV, long-press = in/out of slideshow. */
-    private void rebuildStrip() {
-        stripRow.removeAllViews();
-        final List<Uri> list = uris;
-        thumbViews = new ImageView[list.size()];
-        for (int i = 0; i < list.size(); i++) {
-            final int index = i;
-            ImageView v = new ImageView(this);
-            v.setScaleType(ImageView.ScaleType.CENTER_CROP);
-            v.setPadding(dp(2), dp(2), dp(2), dp(2));
-            v.setBackgroundColor(0xFF0A2236);
-            v.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View view) {
-                    go(index);
-                }
-            });
-            v.setOnLongClickListener(new View.OnLongClickListener() {
-                @Override
-                public boolean onLongClick(View view) {
-                    toggleSkip(index);
-                    return true;
-                }
-            });
-            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(68), dp(68));
-            lp.setMargins(dp(2), 0, dp(2), 0);
-            stripRow.addView(v, lp);
-            thumbViews[i] = v;
-            loadThumb(list, i);
+    /** Redraws the grid cells (highlight on the photo on the TV, gold on the picked ones). */
+    private void updateStrip(boolean reveal) {
+        adapter.notifyDataSetChanged();
+        if (reveal && pos >= 0 && (pos < grid.getFirstVisiblePosition() || pos > grid.getLastVisiblePosition())) {
+            grid.smoothScrollToPosition(pos);
         }
+    }
+
+    private void styleCell(ImageView v, int i) {
+        v.setPadding(dp(2), dp(2), dp(2), dp(2));
+        v.setBackgroundColor(i == pos ? CYAN : (i < picked.length && picked[i] ? GOLD : CELL));
+    }
+
+    private ImageView newCell() {
+        ImageView v = new ImageView(this) {
+            @Override
+            protected void onMeasure(int widthSpec, int heightSpec) {
+                super.onMeasure(widthSpec, widthSpec);
+            }
+        };
+        v.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        return v;
     }
 
     private void loadThumb(final List<Uri> list, final int i) {
-        final Bitmap have = thumbCache.get(i);
-        if (have != null) {
-            thumbViews[i].setImageBitmap(have);
-            return;
-        }
         try {
             thumbMaker.execute(new Runnable() {
                 @Override
                 public void run() {
+                    if (i < visFirst - 12 || i > visLast + 12 || list != uris) {
+                        return;
+                    }
                     final Bitmap b = makeThumb(list.get(i));
                     if (b == null) {
                         return;
@@ -567,19 +672,28 @@ public class PhotoActivity extends Activity {
                     handler.post(new Runnable() {
                         @Override
                         public void run() {
-                            if (list == uris && i < thumbViews.length) {
-                                thumbViews[i].setImageBitmap(b);
+                            if (list == uris) {
+                                showThumb(i, b);
                             }
                         }
                     });
                 }
             });
-        } catch (java.util.concurrent.RejectedExecutionException e) {
+        } catch (RejectedExecutionException e) {
             // the screen is closing
         }
     }
 
-    /** A small upright square-ish picture of the photo for the strip, or null if unreadable. */
+    private void showThumb(int i, Bitmap b) {
+        for (int c = 0; c < grid.getChildCount(); c++) {
+            View cell = grid.getChildAt(c);
+            if (cell.getTag() instanceof Integer && (Integer) cell.getTag() == i) {
+                ((ImageView) cell).setImageBitmap(b);
+            }
+        }
+    }
+
+    /** A small upright picture of the photo for the grid, or null if unreadable. */
     private Bitmap makeThumb(Uri uri) {
         try {
             BitmapFactory.Options bounds = new BitmapFactory.Options();
@@ -592,11 +706,12 @@ public class PhotoActivity extends Activity {
                 return null;
             }
             int sample = 1;
-            while (big / (sample * 2) >= 160) {
+            while (big / (sample * 2) >= 200) {
                 sample *= 2;
             }
             BitmapFactory.Options o = new BitmapFactory.Options();
             o.inSampleSize = sample;
+            o.inPreferredConfig = Bitmap.Config.RGB_565;
             Bitmap bmp;
             try (InputStream in = getContentResolver().openInputStream(uri)) {
                 bmp = BitmapFactory.decodeStream(in, null, o);
@@ -617,34 +732,21 @@ public class PhotoActivity extends Activity {
         }
     }
 
-    /** Highlights the photo on the TV, dims the ones left out of the slideshow, scrolls the strip to it. */
-    private void updateStrip() {
-        for (int i = 0; i < thumbViews.length; i++) {
-            thumbViews[i].setBackgroundColor(i == pos ? CYAN : 0xFF0A2236);
-            thumbViews[i].setAlpha(i < skipped.length && skipped[i] ? 0.3f : 1f);
-        }
-        if (pos < thumbViews.length) {
-            final View selected = thumbViews[pos];
-            strip.post(new Runnable() {
-                @Override
-                public void run() {
-                    strip.smoothScrollTo(selected.getLeft() - (strip.getWidth() - selected.getWidth()) / 2, 0);
-                }
-            });
-        }
-    }
+    // ---------------------------------------------------------------- buttons
 
     private void toggleSlideshow() {
         if (slideshow) {
             stopSlideshow();
             return;
         }
-        if (includedCount() == 0) {
-            status.setText("Every photo is left out of the slideshow. Long-press a thumbnail to put it back.");
+        if (uris.isEmpty()) {
             return;
         }
         slideshow = true;
         slideButton.setText("PAUSE");
+        if (pos < 0) {
+            go(pickedCount > 0 ? nextInSlideshow(-1) : 0);
+        }
         handler.postDelayed(tick, INTERVALS[intervalIdx]);
     }
 
@@ -700,7 +802,7 @@ public class PhotoActivity extends Activity {
         preview = new ImageView(this);
         preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
         preview.setBackgroundColor(0xFF000000);
-        col.addView(preview, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f));
+        col.addView(preview, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 2f));
         final GestureDetector swipe = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override
             public boolean onDown(MotionEvent e) {
@@ -710,7 +812,7 @@ public class PhotoActivity extends Activity {
             @Override
             public boolean onFling(MotionEvent a, MotionEvent b, float vx, float vy) {
                 if (Math.abs(vx) > Math.abs(vy) && Math.abs(vx) > 600) {
-                    go(pos + (vx < 0 ? 1 : -1));
+                    go(vx < 0 ? pos + 1 : (pos < 0 ? 0 : pos - 1));
                     return true;
                 }
                 return false;
@@ -723,17 +825,72 @@ public class PhotoActivity extends Activity {
             }
         });
 
-        strip = new HorizontalScrollView(this);
-        strip.setHorizontalScrollBarEnabled(false);
-        stripRow = new LinearLayout(this);
-        stripRow.setOrientation(LinearLayout.HORIZONTAL);
-        strip.addView(stripRow);
-        LinearLayout.LayoutParams stripLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
-        stripLp.topMargin = dp(8);
-        col.addView(strip, stripLp);
+        grid = new GridView(this);
+        grid.setNumColumns(4);
+        grid.setHorizontalSpacing(dp(3));
+        grid.setVerticalSpacing(dp(3));
+        grid.setStretchMode(GridView.STRETCH_COLUMN_WIDTH);
+        grid.setVerticalScrollBarEnabled(false);
+        adapter = new BaseAdapter() {
+            @Override
+            public int getCount() {
+                return uris.size();
+            }
 
-        counter = text("", 16, WHITE, true);
+            @Override
+            public Object getItem(int position) {
+                return null;
+            }
+
+            @Override
+            public long getItemId(int position) {
+                return position;
+            }
+
+            @Override
+            public View getView(int position, View convertView, ViewGroup parent) {
+                ImageView v = convertView != null ? (ImageView) convertView : newCell();
+                v.setTag(position);
+                Bitmap have = thumbCache.get(position);
+                v.setImageBitmap(have);
+                if (have == null) {
+                    loadThumb(uris, position);
+                }
+                styleCell(v, position);
+                return v;
+            }
+        };
+        grid.setAdapter(adapter);
+        grid.setOnItemClickListener(new AdapterView.OnItemClickListener() {
+            @Override
+            public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
+                go(position);
+            }
+        });
+        grid.setOnItemLongClickListener(new AdapterView.OnItemLongClickListener() {
+            @Override
+            public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
+                togglePick(position);
+                return true;
+            }
+        });
+        grid.setOnScrollListener(new AbsListView.OnScrollListener() {
+            @Override
+            public void onScrollStateChanged(AbsListView view, int scrollState) {
+            }
+
+            @Override
+            public void onScroll(AbsListView view, int first, int visible, int total) {
+                visFirst = first;
+                visLast = first + visible;
+            }
+        });
+        LinearLayout.LayoutParams gridLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                0, 3f);
+        gridLp.topMargin = dp(8);
+        col.addView(grid, gridLp);
+
+        counter = text("", 14, WHITE, true);
         counter.setGravity(Gravity.CENTER);
         col.addView(counter);
 
@@ -742,7 +899,7 @@ public class PhotoActivity extends Activity {
         row1.addView(button("PREV", new Runnable() {
             @Override
             public void run() {
-                go(pos - 1);
+                go(pos < 0 ? 0 : pos - 1);
             }
         }));
         slideButton = button("SLIDESHOW", new Runnable() {
@@ -776,9 +933,8 @@ public class PhotoActivity extends Activity {
             }
         }));
         col.addView(row2);
-        col.addView(text("Tap a thumbnail to show it on the TV. Long-press one to leave it out of (or put it back "
-                + "into) the slideshow. LEFT/RIGHT on the TV remote work too. "
-                + "Leaving this screen keeps the last photo on the TV.", 12, DIM, false));
+        col.addView(text("Tap a photo: it goes on the TV and stays until you pick another. Long-press photos "
+                + "to pick a set for the slideshow (none picked = all).", 11, DIM, false));
         setContentView(col);
     }
 

@@ -17,6 +17,11 @@
 
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- Browsing the phone's gallery in ARC PHOTOS. Photos are read only when you tap them, and only
+         TV-sized copies are sent to your TV. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/icon"
