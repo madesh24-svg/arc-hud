@@ -12,12 +12,14 @@ import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.LruCache;
 import android.view.Gravity;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.widget.Button;
+import android.widget.HorizontalScrollView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -58,6 +60,14 @@ public class PhotoActivity extends Activity {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
+    /** Makes the small strip thumbnails, apart from the worker so sending to the TV is never held up. */
+    private final ExecutorService thumbMaker = Executors.newFixedThreadPool(2);
+    private final LruCache<Integer, Bitmap> thumbCache = new LruCache<Integer, Bitmap>(8 * 1024 * 1024) {
+        @Override
+        protected int sizeOf(Integer key, Bitmap value) {
+            return value.getByteCount();
+        }
+    };
     /** TV-sized JPEGs already made, by album index. Guarded by itself. */
     private final Map<Integer, byte[]> cache = new HashMap<>();
     /** Album indexes the TV is known to hold. Touched on the worker thread only. */
@@ -81,12 +91,17 @@ public class PhotoActivity extends Activity {
     private TextView status;
     private Button slideButton;
     private Button intervalButton;
+    private HorizontalScrollView strip;
+    private LinearLayout stripRow;
+    private ImageView[] thumbViews = new ImageView[0];
+    /** Photos left out of the slideshow (long-press a thumbnail). They can still be shown by tapping them. */
+    private boolean[] skipped = new boolean[0];
 
     private final Runnable tick = new Runnable() {
         @Override
         public void run() {
             if (slideshow) {
-                go(pos + 1);
+                go(nextIncluded(pos));
                 handler.postDelayed(this, INTERVALS[intervalIdx]);
             }
         }
@@ -128,6 +143,7 @@ public class PhotoActivity extends Activity {
         // the TV keeps showing the last photo; STOP CASTING (or BACK on the TV) closes it
         handler.removeCallbacksAndMessages(null);
         worker.shutdownNow();
+        thumbMaker.shutdownNow();
         super.onDestroy();
     }
 
@@ -150,6 +166,9 @@ public class PhotoActivity extends Activity {
         }
         stopSlideshow();
         uris = list;
+        skipped = new boolean[list.size()];
+        thumbCache.evictAll();
+        rebuildStrip();
         session = String.format(Locale.US, "ph%08x", new SecureRandom().nextInt());
         lastShown = -1;
         synchronized (cache) {
@@ -168,7 +187,8 @@ public class PhotoActivity extends Activity {
     private void go(int target) {
         int n = uris.size();
         pos = ((target % n) + n) % n;
-        counter.setText((pos + 1) + " / " + n);
+        updateCounter();
+        updateStrip();
         status.setText("Sending to the TV...");
         cast(pos, ++gen, true);
     }
@@ -339,7 +359,8 @@ public class PhotoActivity extends Activity {
             stopSlideshow();
             pos = tvPos;
             lastShown = tvPos;
-            counter.setText((pos + 1) + " / " + uris.size());
+            updateCounter();
+            updateStrip();
             cast(pos, ++gen, false);
         }
     }
@@ -459,9 +480,167 @@ public class PhotoActivity extends Activity {
 
     // ---------------------------------------------------------------- buttons
 
+    /** The next photo after from that is not left out of the slideshow (from itself if all others are). */
+    private int nextIncluded(int from) {
+        int n = uris.size();
+        for (int step = 1; step <= n; step++) {
+            int i = (from + step) % n;
+            if (!skipped[i]) {
+                return i;
+            }
+        }
+        return from;
+    }
+
+    private int includedCount() {
+        int c = 0;
+        for (boolean s : skipped) {
+            if (!s) {
+                c++;
+            }
+        }
+        return c;
+    }
+
+    private void updateCounter() {
+        int n = uris.size();
+        int inc = includedCount();
+        counter.setText((pos + 1) + " / " + n + (inc < n ? "   SLIDESHOW: " + inc + " PHOTOS" : ""));
+    }
+
+    private void toggleSkip(int i) {
+        if (i < 0 || i >= skipped.length) {
+            return;
+        }
+        skipped[i] = !skipped[i];
+        updateCounter();
+        updateStrip();
+    }
+
+    /** One thumbnail per photo in a scrolling strip: tap = show on the TV, long-press = in/out of slideshow. */
+    private void rebuildStrip() {
+        stripRow.removeAllViews();
+        final List<Uri> list = uris;
+        thumbViews = new ImageView[list.size()];
+        for (int i = 0; i < list.size(); i++) {
+            final int index = i;
+            ImageView v = new ImageView(this);
+            v.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            v.setPadding(dp(2), dp(2), dp(2), dp(2));
+            v.setBackgroundColor(0xFF0A2236);
+            v.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    go(index);
+                }
+            });
+            v.setOnLongClickListener(new View.OnLongClickListener() {
+                @Override
+                public boolean onLongClick(View view) {
+                    toggleSkip(index);
+                    return true;
+                }
+            });
+            LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(68), dp(68));
+            lp.setMargins(dp(2), 0, dp(2), 0);
+            stripRow.addView(v, lp);
+            thumbViews[i] = v;
+            loadThumb(list, i);
+        }
+    }
+
+    private void loadThumb(final List<Uri> list, final int i) {
+        final Bitmap have = thumbCache.get(i);
+        if (have != null) {
+            thumbViews[i].setImageBitmap(have);
+            return;
+        }
+        try {
+            thumbMaker.execute(new Runnable() {
+                @Override
+                public void run() {
+                    final Bitmap b = makeThumb(list.get(i));
+                    if (b == null) {
+                        return;
+                    }
+                    thumbCache.put(i, b);
+                    handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (list == uris && i < thumbViews.length) {
+                                thumbViews[i].setImageBitmap(b);
+                            }
+                        }
+                    });
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            // the screen is closing
+        }
+    }
+
+    /** A small upright square-ish picture of the photo for the strip, or null if unreadable. */
+    private Bitmap makeThumb(Uri uri) {
+        try {
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                BitmapFactory.decodeStream(in, null, bounds);
+            }
+            int big = Math.max(bounds.outWidth, bounds.outHeight);
+            if (big <= 0) {
+                return null;
+            }
+            int sample = 1;
+            while (big / (sample * 2) >= 160) {
+                sample *= 2;
+            }
+            BitmapFactory.Options o = new BitmapFactory.Options();
+            o.inSampleSize = sample;
+            Bitmap bmp;
+            try (InputStream in = getContentResolver().openInputStream(uri)) {
+                bmp = BitmapFactory.decodeStream(in, null, o);
+            }
+            int degrees = rotation(uri);
+            if (bmp == null || degrees == 0) {
+                return bmp;
+            }
+            Matrix m = new Matrix();
+            m.postRotate(degrees);
+            Bitmap turned = Bitmap.createBitmap(bmp, 0, 0, bmp.getWidth(), bmp.getHeight(), m, true);
+            if (turned != bmp) {
+                bmp.recycle();
+            }
+            return turned;
+        } catch (IOException | RuntimeException | OutOfMemoryError e) {
+            return null;
+        }
+    }
+
+    /** Highlights the photo on the TV, dims the ones left out of the slideshow, scrolls the strip to it. */
+    private void updateStrip() {
+        for (int i = 0; i < thumbViews.length; i++) {
+            thumbViews[i].setBackgroundColor(i == pos ? CYAN : 0xFF0A2236);
+            thumbViews[i].setAlpha(i < skipped.length && skipped[i] ? 0.3f : 1f);
+        }
+        if (pos < thumbViews.length) {
+            final View selected = thumbViews[pos];
+            strip.post(new Runnable() {
+                @Override
+                public void run() {
+                    strip.smoothScrollTo(selected.getLeft() - (strip.getWidth() - selected.getWidth()) / 2, 0);
+                }
+            });
+        }
+    }
+
     private void toggleSlideshow() {
         if (slideshow) {
             stopSlideshow();
+            return;
+        }
+        if (includedCount() == 0) {
+            status.setText("Every photo is left out of the slideshow. Long-press a thumbnail to put it back.");
             return;
         }
         slideshow = true;
@@ -544,6 +723,16 @@ public class PhotoActivity extends Activity {
             }
         });
 
+        strip = new HorizontalScrollView(this);
+        strip.setHorizontalScrollBarEnabled(false);
+        stripRow = new LinearLayout(this);
+        stripRow.setOrientation(LinearLayout.HORIZONTAL);
+        strip.addView(stripRow);
+        LinearLayout.LayoutParams stripLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        stripLp.topMargin = dp(8);
+        col.addView(strip, stripLp);
+
         counter = text("", 16, WHITE, true);
         counter.setGravity(Gravity.CENTER);
         col.addView(counter);
@@ -587,7 +776,8 @@ public class PhotoActivity extends Activity {
             }
         }));
         col.addView(row2);
-        col.addView(text("Swipe the photo or use the buttons. LEFT/RIGHT on the TV remote work too. "
+        col.addView(text("Tap a thumbnail to show it on the TV. Long-press one to leave it out of (or put it back "
+                + "into) the slideshow. LEFT/RIGHT on the TV remote work too. "
                 + "Leaving this screen keeps the last photo on the TV.", 12, DIM, false));
         setContentView(col);
     }
