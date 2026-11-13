@@ -329,6 +329,11 @@ final class SecurityScan {
 
     private static void add(Host h, int level, String text, String fix) {
         synchronized (h) {
+            for (Finding f : h.findings) {
+                if (f.text.equals(text)) {
+                    return;
+                }
+            }
             h.findings.add(new Finding(level, text, fix));
         }
     }
@@ -538,7 +543,7 @@ final class SecurityScan {
         if (r == null) {
             return;
         }
-        if (!r.title.isEmpty() && h.name.isEmpty() && r.title.length() <= 30) {
+        if (r.status == 200 && !r.title.isEmpty() && h.name.isEmpty() && r.title.length() <= 30) {
             h.name = r.title;
         }
         String where = (tls ? "HTTPS" : "HTTP") + " port " + port;

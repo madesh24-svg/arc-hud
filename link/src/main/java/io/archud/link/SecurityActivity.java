@@ -184,7 +184,7 @@ public class SecurityActivity extends JarvisActivity {
         String grade = w == SecurityScan.FIX ? "FIX  " + fixes + " ISSUE" + (fixes == 1 ? "" : "S")
                 + (reviews > 0 ? ",  " + reviews + " TO REVIEW" : "")
                 : (w == SecurityScan.REVIEW ? "REVIEW  " + reviews + " THING" + (reviews == 1 ? "" : "S")
-                : "NOTHING RISKY FOUND");
+                : (h.open.isEmpty() ? "NO OPEN PORTS FOUND" : "NOTHING RISKY FOUND"));
         p.addView(Hud.label(this, grade, 12, w == SecurityScan.FIX ? Hud.WARN
                 : (w == SecurityScan.REVIEW ? Hud.GOLD : Hud.OK), true));
         if (!h.open.isEmpty()) {
