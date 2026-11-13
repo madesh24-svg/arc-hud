@@ -12,6 +12,7 @@ import android.os.Bundle;
 import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
+import android.view.View;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -34,6 +35,8 @@ public class MainActivity extends Activity {
     private EditText pinField;
     private EditText linkField;
     private Hud.Status status;
+    private LinearLayout settingsPanel;
+    private LinearLayout linkPanel;
     private volatile boolean busy;
 
     @Override
@@ -59,7 +62,16 @@ public class MainActivity extends Activity {
         names.setPadding(dp(14), 0, 0, 0);
         names.addView(Hud.label(this, "ARC LINK", 22, Hud.WHITE, true));
         names.addView(Hud.label(this, "PHONE TO TV", 11, Hud.CYAN, false));
-        brand.addView(names);
+        brand.addView(names, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout cog = new LinearLayout(this);
+        cog.setGravity(Gravity.CENTER);
+        cog.setBackground(new Hud.Frame(this, 8, Hud.PANEL, 0xDD0F3350, Hud.FRAME, Hud.CYAN));
+        cog.addView(new Hud.Icon(this, Hud.ICON_COG, Hud.CYAN), new LinearLayout.LayoutParams(dp(24), dp(24)));
+        cog.setClickable(true);
+        cog.setFocusable(true);
+        cog.setContentDescription("Settings");
+        cog.setOnClickListener(v -> toggleSettings(scroll));
+        brand.addView(cog, new LinearLayout.LayoutParams(dp(44), dp(44)));
         col.addView(brand);
         col.addView(Hud.rule(this));
         status = new Hud.Status(this);
@@ -89,14 +101,19 @@ public class MainActivity extends Activity {
         tilesA.setOrientation(LinearLayout.HORIZONTAL);
         tilesA.addView(Hud.tile(this, Hud.ICON_PHOTO, "PHOTOS", true, this::pickPhotos));
         tilesA.addView(Hud.tile(this, Hud.ICON_VIDEO, "VIDEO", true, this::pickVideo));
-        final LinearLayout link = Hud.panel(this, "SEND A LINK");
+        linkPanel = Hud.panel(this, "SEND A LINK");
+        final LinearLayout link = linkPanel;
         LinearLayout tilesB = new LinearLayout(this);
         tilesB.setOrientation(LinearLayout.HORIZONTAL);
         tilesB.addView(Hud.tile(this, Hud.ICON_LINK, "LINK", true, new Runnable() {
             @Override
             public void run() {
-                scroll.smoothScrollTo(0, link.getTop());
-                linkField.requestFocus();
+                boolean show = link.getVisibility() != View.VISIBLE;
+                link.setVisibility(show ? View.VISIBLE : View.GONE);
+                if (show) {
+                    scroll.post(() -> scroll.smoothScrollTo(0, link.getTop()));
+                    linkField.requestFocus();
+                }
             }
         }));
         tilesB.addView(Hud.tile(this, Hud.ICON_AUDIO, "AUDIO SOON", false, this::pickVideo));
@@ -114,16 +131,18 @@ public class MainActivity extends Activity {
         keep.addView(Hud.label(this, "VERSION " + version(), 12, Hud.WHITE, true));
         keep.addView(Hud.button(this, "CHECK FOR UPDATE", Hud.OUTLINE, false, this::update));
 
-        if (!Store.paired(this)) {
-            col.addView(pair, Hud.stack(this));
-        }
+        // pairing and upkeep live behind the cog; they open by themselves until the TV is paired
+        settingsPanel = new LinearLayout(this);
+        settingsPanel.setOrientation(LinearLayout.VERTICAL);
+        settingsPanel.addView(pair, Hud.stack(this));
+        settingsPanel.addView(keep, Hud.stack(this));
+        settingsPanel.setVisibility(Store.paired(this) ? View.GONE : View.VISIBLE);
+        linkPanel.setVisibility(View.GONE);
+
         col.addView(tilesA);
         col.addView(tilesB, Hud.stack(this));
-        col.addView(link, Hud.stack(this));
-        if (Store.paired(this)) {
-            col.addView(pair, Hud.stack(this));
-        }
-        col.addView(keep, Hud.stack(this));
+        col.addView(linkPanel, Hud.stack(this));
+        col.addView(settingsPanel);
 
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -138,8 +157,21 @@ public class MainActivity extends Activity {
         if (Store.paired(this)) {
             status.set("PAIRED WITH THE TV AT " + Store.host(this), Hud.OK);
         } else {
-            status.set("NOT PAIRED YET. PAIR WITH THE TV BELOW.", Hud.GOLD);
+            status.set("NOT PAIRED YET. TAP THE COG TO PAIR.", Hud.GOLD);
         }
+    }
+
+    private void toggleSettings(ScrollView scroll) {
+        boolean show = settingsPanel.getVisibility() != View.VISIBLE;
+        settingsPanel.setVisibility(show ? View.VISIBLE : View.GONE);
+        if (show) {
+            scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+        }
+    }
+
+    private void needPairing() {
+        settingsPanel.setVisibility(View.VISIBLE);
+        message("Pair with the TV first: enter the PIN in PAIRING below (or tap the cog).");
     }
 
     private void findTv() {
@@ -207,7 +239,7 @@ public class MainActivity extends Activity {
 
     private void pickPhotos() {
         if (!Store.paired(this)) {
-            message("Pair with the TV first (step 1).");
+            needPairing();
             return;
         }
         startActivity(new Intent(this, PhotoActivity.class).putExtra(PhotoActivity.EXTRA_GALLERY, true));
@@ -215,7 +247,7 @@ public class MainActivity extends Activity {
 
     private void pickVideo() {
         if (!Store.paired(this)) {
-            message("Pair with the TV first (step 1).");
+            needPairing();
             return;
         }
         Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT)
@@ -240,7 +272,7 @@ public class MainActivity extends Activity {
 
     private void sendLink() {
         if (!Store.paired(this)) {
-            message("Pair with the TV first (step 1).");
+            needPairing();
             return;
         }
         Sender.link(this, linkField.getText().toString());

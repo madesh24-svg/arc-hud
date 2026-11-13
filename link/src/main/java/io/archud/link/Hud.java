@@ -47,6 +47,7 @@ final class Hud {
     static final int ICON_VIDEO = 1;
     static final int ICON_LINK = 2;
     static final int ICON_AUDIO = 3;
+    static final int ICON_COG = 4;
 
     private Hud() {
     }
@@ -462,6 +463,17 @@ final class Hud {
                 c.drawRoundRect(r, h * 0.2f, h * 0.2f, p);
                 r.set(w * 0.38f, h * 0.30f, w - m, h * 0.70f);
                 c.drawRoundRect(r, h * 0.2f, h * 0.2f, p);
+            } else if (kind == ICON_COG) {
+                float cx = w / 2f;
+                float cy = h / 2f;
+                c.drawCircle(cx, cy, w * 0.17f, p);
+                c.drawCircle(cx, cy, w * 0.31f, p);
+                for (int i = 0; i < 8; i++) {
+                    double a = Math.PI / 4 * i;
+                    float cs = (float) Math.cos(a);
+                    float sn = (float) Math.sin(a);
+                    c.drawLine(cx + cs * w * 0.31f, cy + sn * w * 0.31f, cx + cs * w * 0.45f, cy + sn * w * 0.45f, p);
+                }
             } else {
                 r.set(w * 0.18f, h * 0.60f, w * 0.48f, h * 0.88f);
                 p.setStyle(Paint.Style.FILL);
