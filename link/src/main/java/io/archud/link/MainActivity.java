@@ -21,10 +21,13 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 /** Pair with the TV once; send a video or a link; keep sharing alive; update. */
 public class MainActivity extends Activity {
     private static final int PICK_VIDEO = 7;
+    private static final int PICK_PHOTOS = 8;
     private static final int CYAN = 0xFF50DCFF;
     private static final int GOLD = 0xFFFFB93C;
     private static final int WHITE = 0xFFEBFAFF;
@@ -69,6 +72,9 @@ public class MainActivity extends Activity {
         col.addView(button("SAVE AND TEST", this::saveAndTest));
 
         col.addView(heading("2. SEND"));
+        col.addView(button("PICK PHOTOS TO SHOW ON THE TV", this::pickPhotos));
+        col.addView(text("Swipe on the phone and the TV follows. The TV gets small TV-sized copies; "
+                + "your originals stay here.", 13, DIM, false));
         col.addView(button("PICK A VIDEO TO PLAY ON THE TV", this::pickVideo));
         col.addView(text("The video stays on this phone and streams to the TV. Keep Wi-Fi on.", 13, DIM, false));
         linkField = field("Paste a YouTube link or web address", InputType.TYPE_TEXT_VARIATION_URI);
@@ -161,6 +167,18 @@ public class MainActivity extends Activity {
         }, "arclink-pair").start();
     }
 
+    private void pickPhotos() {
+        if (!Store.paired(this)) {
+            message("Pair with the TV first (step 1).");
+            return;
+        }
+        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT)
+                .addCategory(Intent.CATEGORY_OPENABLE)
+                .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                .setType("image/*");
+        startActivityForResult(pick, PICK_PHOTOS);
+    }
+
     private void pickVideo() {
         if (!Store.paired(this)) {
             message("Pair with the TV first (step 1).");
@@ -175,6 +193,18 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == PICK_PHOTOS && resultCode == RESULT_OK && data != null) {
+            List<Uri> chosen = new ArrayList<>();
+            if (data.getClipData() != null) {
+                for (int i = 0; i < data.getClipData().getItemCount(); i++) {
+                    chosen.add(data.getClipData().getItemAt(i).getUri());
+                }
+            } else if (data.getData() != null) {
+                chosen.add(data.getData());
+            }
+            Sender.photos(this, chosen);
+            return;
+        }
         if (requestCode == PICK_VIDEO && resultCode == RESULT_OK && data != null && data.getData() != null) {
             Uri uri = data.getData();
             try {

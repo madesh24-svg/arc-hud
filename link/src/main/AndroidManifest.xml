@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Local network only: talks to the TV's ARC HUD (port 8765) and serves a video to that one TV.
+    <!-- Local network only: talks to the TV's ARC HUD (port 8765), serves a video to that one TV and sends
+         it TV-sized copies of photos you choose.
          Internet is used only for "Check for update", HTTPS, restricted to this app's own GitHub releases. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -49,7 +50,20 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="video/*" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
         </activity>
+
+        <!-- ARC PHOTOS pager: the photo on this screen is the photo on the TV. -->
+        <activity
+            android:name=".PhotoActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            android:launchMode="singleTask" />
 
         <service
             android:name=".ServeService"

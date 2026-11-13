@@ -91,6 +91,16 @@
             android:screenOrientation="landscape"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
 
+        <!-- ARC PHOTOS: shows photos a phone sends through ARC LINK; the photo files are deleted on close. -->
+        <activity
+            android:name=".ImageActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            android:label="ARC PHOTOS"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
+
         <activity
             android:name=".DevicesActivity"
             android:exported="false"

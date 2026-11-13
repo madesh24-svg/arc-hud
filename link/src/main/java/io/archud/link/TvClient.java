@@ -74,6 +74,28 @@ final class TvClient {
         }
     }
 
+    /** POST raw bytes (a photo) or just headers; each extra header is a full "Name: value" line. */
+    static Reply send(String host, String path, String pin, String[] headers, byte[] payload) throws IOException {
+        if (!isLocalIp(host)) {
+            throw new IOException("The TV address must be a home-network address like 192.168.0.20");
+        }
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress(host, PORT), 3000);
+            s.setSoTimeout(20000);
+            StringBuilder head = new StringBuilder("POST ").append(path).append(" HTTP/1.1\r\nHost: ")
+                    .append(host).append(':').append(PORT).append("\r\nX-Pin: ").append(pin);
+            for (String h : headers) {
+                head.append("\r\n").append(h);
+            }
+            head.append("\r\nContent-Length: ").append(payload.length).append("\r\nConnection: close\r\n\r\n");
+            OutputStream out = s.getOutputStream();
+            out.write(head.toString().getBytes(StandardCharsets.US_ASCII));
+            out.write(payload);
+            out.flush();
+            return read(s.getInputStream());
+        }
+    }
+
     private static Reply read(InputStream in) throws IOException {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         byte[] chunk = new byte[2048];

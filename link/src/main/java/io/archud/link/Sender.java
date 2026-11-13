@@ -1,5 +1,6 @@
 package io.archud.link;
 
+import android.content.ClipData;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -9,6 +10,7 @@ import android.widget.Toast;
 
 import java.io.IOException;
 import java.net.URLEncoder;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -25,6 +27,21 @@ final class Sender {
                 .setData(uri)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         c.startForegroundService(service);
+    }
+
+    /** Opens the photo pager for these photos; the pager shrinks them and sends them to the TV. */
+    static void photos(Context c, List<Uri> uris) {
+        if (uris == null || uris.isEmpty()) {
+            say(c, "No photos found in that.");
+            return;
+        }
+        ClipData clip = ClipData.newRawUri("photos", uris.get(0));
+        for (int i = 1; i < uris.size() && i < PhotoActivity.MAX_PHOTOS; i++) {
+            clip.addItem(new ClipData.Item(uris.get(i)));
+        }
+        c.startActivity(new Intent(c, PhotoActivity.class)
+                .setClipData(clip)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK));
     }
 
     /** First web address inside shared text, or null. */

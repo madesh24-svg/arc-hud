@@ -49,6 +49,8 @@ final class LinkServer {
     /** Space always left free on the TV after a video is stored. */
     private static final long RESERVE = 100L * 1024 * 1024;
     static final String VIDEO_PREFIX = "arclink-video-";
+    /** Largest photo accepted; the phone sends TV-sized JPEGs, normally a few hundred KB. */
+    private static final long MAX_IMAGE = 4L * 1024 * 1024;
 
     private static LinkServer instance;
 
@@ -198,6 +200,9 @@ final class LinkServer {
             long size = 0;
             String pin = null;
             String fileName = null;
+            String session = "";
+            long imagePos = 0;
+            long imageTotal = 0;
             for (int i = 1; i < lines.length; i++) {
                 int c = lines[i].indexOf(':');
                 if (c <= 0) {
@@ -215,6 +220,12 @@ final class LinkServer {
                     pin = value;
                 } else if ("x-name".equals(name)) {
                     fileName = value;
+                } else if ("x-session".equals(name)) {
+                    session = value;
+                } else if ("x-pos".equals(name)) {
+                    imagePos = number(value, 0, 9999);
+                } else if ("x-total".equals(name)) {
+                    imageTotal = number(value, 0, 9999);
                 } else if ("x-size".equals(name)) {
                     try {
                         size = Long.parseLong(value);
@@ -274,6 +285,11 @@ final class LinkServer {
                     return;
                 }
                 play(s, readBody(in, (int) length));
+            } else if ("POST".equals(method) && path.startsWith("/image")) {
+                if (!authorized(s, pin)) {
+                    return;
+                }
+                image(s, in, path, length, session, (int) imagePos, (int) imageTotal);
             } else {
                 reply(s, 404, "text/plain", "Not found");
             }
@@ -366,8 +382,11 @@ final class LinkServer {
             return;
         }
         String playing = PlayerActivity.current();
+        boolean photos = ImageStore.isOpen();
         for (File f : files) {
             if (f.getName().startsWith(VIDEO_PREFIX) && !f.getAbsolutePath().equals(playing)) {
+                f.delete();
+            } else if (f.getName().startsWith(ImageStore.PREFIX) && !photos) {
                 f.delete();
             }
         }
@@ -478,6 +497,100 @@ final class LinkServer {
             synchronized (this) {
                 uploading = false;
             }
+            if (!ok) {
+                part.delete();
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- photos from the phone
+
+    /** Checks the PIN; on failure the reply has already been sent and false is returned. */
+    private boolean authorized(Socket s, String given) throws IOException {
+        int gate = check(given);
+        if (gate == 0) {
+            return true;
+        }
+        if (gate == 429) {
+            reply(s, 429, "text/plain", "Too many wrong PINs. Wait a minute.");
+        } else {
+            reply(s, 403, "text/plain", "Wrong PIN.");
+        }
+        return false;
+    }
+
+    /**
+     * ARC PHOTOS. /imageput stores one TV-sized photo (headers X-Session, X-Pos, X-Total; body = JPEG),
+     * /imageshow puts a stored photo on screen, /imagestate tells the phone what is on screen (so a remote
+     * LEFT/RIGHT on the TV is followed), /imagestop closes the viewer.
+     */
+    private void image(Socket s, InputStream in, String path, long length, String session, int place,
+            int count) throws IOException {
+        if ("/imagestate".equals(path)) {
+            reply(s, 200, "text/plain", ImageStore.state());
+            return;
+        }
+        if ("/imagestop".equals(path)) {
+            ImageActivity.closeIfOpen();
+            reply(s, 200, "text/plain", "Closed.");
+            return;
+        }
+        boolean put = "/imageput".equals(path);
+        if (!put && !"/imageshow".equals(path)) {
+            reply(s, 404, "text/plain", "Not found");
+            return;
+        }
+        if (!session.matches("[A-Za-z0-9]{4,24}") || place < 1 || count < place) {
+            reply(s, 400, "text/plain", "Bad photo request.");
+            return;
+        }
+        if (!put) {
+            if (!ImageStore.show(session, place, count)) {
+                reply(s, 409, "text/plain", "That photo is not on the TV yet.");
+                return;
+            }
+            app.startActivity(new Intent(app, ImageActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            reply(s, 200, "text/plain", "Showing on the TV.");
+            return;
+        }
+        if (length <= 0 || length > MAX_IMAGE) {
+            reply(s, 413, "text/plain", "Photo too large.");
+            return;
+        }
+        if (length + RESERVE > app.getCacheDir().getUsableSpace()) {
+            reply(s, 413, "text/plain", "Not enough free space on the TV.");
+            return;
+        }
+        File part = new File(app.getCacheDir(), ImageStore.PREFIX + session + "-" + place + ".part");
+        File done = ImageStore.file(app, session, place);
+        boolean ok = false;
+        try {
+            s.setSoTimeout(15000);
+            try (FileOutputStream out = new FileOutputStream(part)) {
+                byte[] buf = new byte[32768];
+                long left = length;
+                while (left > 0) {
+                    int n = in.read(buf, 0, (int) Math.min(buf.length, left));
+                    if (n < 0) {
+                        break;
+                    }
+                    out.write(buf, 0, n);
+                    left -= n;
+                }
+                if (left > 0) {
+                    throw new IOException("photo ended early");
+                }
+            }
+            if (done.exists() && !done.delete()) {
+                throw new IOException("could not replace the photo");
+            }
+            if (!part.renameTo(done)) {
+                throw new IOException("could not store the photo");
+            }
+            ImageStore.add(session, place, count, done);
+            ok = true;
+            reply(s, 200, "text/plain", "OK");
+        } finally {
             if (!ok) {
                 part.delete();
             }
