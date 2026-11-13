@@ -64,7 +64,7 @@ public class MainActivity extends JarvisActivity {
         names.setOrientation(LinearLayout.VERTICAL);
         names.setPadding(dp(14), 0, 0, 0);
         names.addView(Hud.label(this, "ARC LINK", 22, Hud.WHITE, true));
-        names.addView(Hud.label(this, "PHONE TO TV", 11, Hud.CYAN, false));
+        names.addView(Hud.label(this, "PHONE TO TV  ·  v" + version(), 11, Hud.CYAN, false));
         brand.addView(names, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         LinearLayout cog = new LinearLayout(this);
         cog.setGravity(Gravity.CENTER);
