@@ -825,8 +825,8 @@ public class AudioActivity extends Activity {
         } finally {
             try {
                 r.release();
-            } catch (RuntimeException ignored) {
-                // nothing left to release
+            } catch (Exception ignored) {
+                // nothing left to release (release() declares IOException on newer SDKs)
             }
         }
         synchronized (covers) {
