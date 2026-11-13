@@ -352,6 +352,11 @@ public class AudioActivity extends Activity {
     }
 
     private void refresh() {
+        if (ended) {
+            // keep telling the phone the queue is finished (length 0) until the song is played again
+            AudioStore.setPlayback(false, 0, 0);
+            return;
+        }
         if (player == null || !prepared) {
             return;
         }
