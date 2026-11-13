@@ -78,6 +78,7 @@ final class Jarvis {
     private static volatile int lastSource;
     private static volatile List<String[]> apps;
     private static volatile long appsAt;
+    private static volatile int appsCode;
 
     private static final Runnable RESTART = new Runnable() {
         @Override
@@ -513,10 +514,26 @@ final class Jarvis {
 
     private static void openApp(String tv, String pin, JarvisBrain.Cmd c) throws IOException {
         List<String[]> list = appsOnTv(tv, pin);
+        if (list.isEmpty()) {
+            say(appsCode == 404 ? "The TV app is out of date. Update it in ARC SETTINGS, then try again."
+                    : "The TV did not send its list of apps. It answered " + appsCode + ".");
+            return;
+        }
         String[] found = matchApp(list, c.arg);
         if (found == null) {
             if (!c.soft) {
-                say("I could not find " + c.arg + " on the TV.");
+                StringBuilder names = new StringBuilder();
+                for (String[] a : list) {
+                    names.append(names.length() == 0 ? "" : ", ").append(a[0]);
+                }
+                final String shown = "TV APPS: " + (names.length() > 140 ? names.substring(0, 140) : names.toString());
+                say("I could not find " + c.arg + " among the TV's " + list.size() + " apps.");
+                MAIN.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        show(shown, Hud.DIM);
+                    }
+                }, 300);
             }
             return;
         }
@@ -577,6 +594,7 @@ final class Jarvis {
             return cached;
         }
         TvClient.Reply r = TvClient.post(tv, "/apps", pin, "");
+        appsCode = r.code;
         List<String[]> list = new ArrayList<>();
         if (r.ok()) {
             for (String line : r.text.split("\n")) {
