@@ -22,7 +22,6 @@ import java.io.IOException;
 
 /** Pair with the TV once; send a video or a link; keep sharing alive; update. */
 public class MainActivity extends Activity {
-    private static final int PICK_VIDEO = 7;
     private static final int CYAN = 0xFF50DCFF;
     private static final int GOLD = 0xFFFFB93C;
     private static final int WHITE = 0xFFEBFAFF;
@@ -33,10 +32,8 @@ public class MainActivity extends Activity {
     private float density;
     private EditText hostField;
     private EditText pinField;
-    private EditText linkField;
     private Hud.Status status;
     private LinearLayout settingsPanel;
-    private LinearLayout linkPanel;
     private volatile boolean busy;
 
     @Override
@@ -96,33 +93,10 @@ public class MainActivity extends Activity {
         pairRow.addView(Hud.button(this, "SAVE AND TEST", Hud.SOLID, true, this::saveAndTest));
         pair.addView(pairRow);
 
-        // what to send
-        LinearLayout tilesA = new LinearLayout(this);
-        tilesA.setOrientation(LinearLayout.HORIZONTAL);
-        tilesA.addView(Hud.tile(this, Hud.ICON_PHOTO, "PHOTOS", true, this::pickPhotos));
-        tilesA.addView(Hud.tile(this, Hud.ICON_VIDEO, "VIDEO", true, this::pickVideo));
-        linkPanel = Hud.panel(this, "SEND A LINK");
-        final LinearLayout link = linkPanel;
-        LinearLayout tilesB = new LinearLayout(this);
-        tilesB.setOrientation(LinearLayout.HORIZONTAL);
-        tilesB.addView(Hud.tile(this, Hud.ICON_LINK, "LINK", true, new Runnable() {
-            @Override
-            public void run() {
-                boolean show = link.getVisibility() != View.VISIBLE;
-                link.setVisibility(show ? View.VISIBLE : View.GONE);
-                if (show) {
-                    scroll.post(() -> scroll.smoothScrollTo(0, link.getTop()));
-                    linkField.requestFocus();
-                }
-            }
-        }));
-        tilesB.addView(Hud.tile(this, Hud.ICON_AUDIO, "AUDIO SOON", false, this::pickVideo));
-
-        linkField = Hud.field(this, "Paste a YouTube link or web address", InputType.TYPE_TEXT_VARIATION_URI);
-        link.addView(linkField);
-        link.addView(Hud.button(this, "SEND LINK TO THE TV", Hud.SOLID, false, this::sendLink));
-        link.addView(Hud.label(this, "Tip: in YouTube, Chrome or Gallery use Share, then ARC LINK (TV).",
-                11, Hud.DIM, false));
+        // one box per feature area; each opens its own screen
+        LinearLayout boxes = new LinearLayout(this);
+        boxes.setOrientation(LinearLayout.HORIZONTAL);
+        boxes.addView(Hud.tile(this, Hud.ICON_MEDIA, "MULTIMEDIA", true, this::openMultimedia));
 
         LinearLayout keep = Hud.panel(this, "KEEP IT WORKING");
         keep.addView(Hud.button(this, "ALLOW RUNNING IN THE BACKGROUND", Hud.GOLDEN, false, this::allowBackground));
@@ -137,11 +111,8 @@ public class MainActivity extends Activity {
         settingsPanel.addView(pair, Hud.stack(this));
         settingsPanel.addView(keep, Hud.stack(this));
         settingsPanel.setVisibility(Store.paired(this) ? View.GONE : View.VISIBLE);
-        linkPanel.setVisibility(View.GONE);
 
-        col.addView(tilesA);
-        col.addView(tilesB, Hud.stack(this));
-        col.addView(linkPanel, Hud.stack(this));
+        col.addView(boxes);
         col.addView(settingsPanel);
 
         if (Build.VERSION.SDK_INT >= 33
@@ -237,45 +208,12 @@ public class MainActivity extends Activity {
         }, "arclink-pair").start();
     }
 
-    private void pickPhotos() {
+    private void openMultimedia() {
         if (!Store.paired(this)) {
             needPairing();
             return;
         }
-        startActivity(new Intent(this, PhotoActivity.class).putExtra(PhotoActivity.EXTRA_GALLERY, true));
-    }
-
-    private void pickVideo() {
-        if (!Store.paired(this)) {
-            needPairing();
-            return;
-        }
-        Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT)
-                .addCategory(Intent.CATEGORY_OPENABLE)
-                .setType("video/*");
-        startActivityForResult(pick, PICK_VIDEO);
-    }
-
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode == PICK_VIDEO && resultCode == RESULT_OK && data != null && data.getData() != null) {
-            Uri uri = data.getData();
-            try {
-                getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            } catch (RuntimeException ignored) {
-                // not every provider offers a persistable grant; the one-time grant is enough
-            }
-            Sender.video(this, uri);
-        }
-    }
-
-    private void sendLink() {
-        if (!Store.paired(this)) {
-            needPairing();
-            return;
-        }
-        Sender.link(this, linkField.getText().toString());
+        startActivity(new Intent(this, MediaActivity.class));
     }
 
     private void allowBackground() {

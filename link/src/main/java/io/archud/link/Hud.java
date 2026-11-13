@@ -48,6 +48,8 @@ final class Hud {
     static final int ICON_LINK = 2;
     static final int ICON_AUDIO = 3;
     static final int ICON_COG = 4;
+    static final int ICON_MEDIA = 5;
+    static final int ICON_BACK = 6;
 
     private Hud() {
     }
@@ -463,6 +465,22 @@ final class Hud {
                 c.drawRoundRect(r, h * 0.2f, h * 0.2f, p);
                 r.set(w * 0.38f, h * 0.30f, w - m, h * 0.70f);
                 c.drawRoundRect(r, h * 0.2f, h * 0.2f, p);
+            } else if (kind == ICON_MEDIA) {
+                r.set(m, h * 0.16f, w - m, h * 0.84f);
+                c.drawRoundRect(r, w * 0.12f, w * 0.12f, p);
+                p.setStyle(Paint.Style.FILL);
+                path.reset();
+                path.moveTo(w * 0.40f, h * 0.34f);
+                path.lineTo(w * 0.66f, h * 0.5f);
+                path.lineTo(w * 0.40f, h * 0.66f);
+                path.close();
+                c.drawPath(path, p);
+            } else if (kind == ICON_BACK) {
+                path.reset();
+                path.moveTo(w * 0.62f, h * 0.2f);
+                path.lineTo(w * 0.32f, h * 0.5f);
+                path.lineTo(w * 0.62f, h * 0.8f);
+                c.drawPath(path, p);
             } else if (kind == ICON_COG) {
                 float cx = w / 2f;
                 float cy = h / 2f;

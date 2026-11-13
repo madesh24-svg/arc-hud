@@ -63,6 +63,11 @@
             </intent-filter>
         </activity>
 
+        <!-- MULTIMEDIA: photos, video, link (and audio) to the TV. -->
+        <activity
+            android:name=".MediaActivity"
+            android:exported="false" />
+
         <!-- ARC PHOTOS pager: the photo on this screen is the photo on the TV. -->
         <activity
             android:name=".PhotoActivity"
