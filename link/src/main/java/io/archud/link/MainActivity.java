@@ -6,23 +6,18 @@ import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
-import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.text.InputType;
-import android.view.View;
-import android.widget.Button;
+import android.view.Gravity;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
 
 /** Pair with the TV once; send a video or a link; keep sharing alive; update. */
 public class MainActivity extends Activity {
@@ -38,57 +33,97 @@ public class MainActivity extends Activity {
     private EditText hostField;
     private EditText pinField;
     private EditText linkField;
-    private TextView status;
+    private Hud.Status status;
     private volatile boolean busy;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         density = getResources().getDisplayMetrics().density;
-        ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(INK);
+        Hud.bars(this);
+        final ScrollView scroll = new ScrollView(this);
+        scroll.setBackground(Hud.background(this));
+        scroll.setFillViewport(true);
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setPadding(dp(20), dp(28), dp(20), dp(40));
+        col.setPadding(dp(16), dp(24), dp(16), dp(32));
         scroll.addView(col);
         setContentView(scroll);
 
-        col.addView(text("ARC LINK", 26, WHITE, true));
-        col.addView(text("Send videos and links from this phone to the TV.", 14, DIM, false));
-        status = text("", 15, CYAN, true);
-        status.setPadding(0, dp(14), 0, 0);
-        col.addView(status);
+        LinearLayout brand = new LinearLayout(this);
+        brand.setOrientation(LinearLayout.HORIZONTAL);
+        brand.setGravity(Gravity.CENTER_VERTICAL);
+        brand.addView(new Hud.Ring(this), new LinearLayout.LayoutParams(dp(50), dp(50)));
+        LinearLayout names = new LinearLayout(this);
+        names.setOrientation(LinearLayout.VERTICAL);
+        names.setPadding(dp(14), 0, 0, 0);
+        names.addView(Hud.label(this, "ARC LINK", 22, Hud.WHITE, true));
+        names.addView(Hud.label(this, "PHONE TO TV", 11, Hud.CYAN, false));
+        brand.addView(names);
+        col.addView(brand);
+        col.addView(Hud.rule(this));
+        status = new Hud.Status(this);
+        LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        statusLp.bottomMargin = dp(14);
+        col.addView(status, statusLp);
 
-        col.addView(heading("1. PAIR WITH THE TV (ONCE)"));
-        col.addView(text("On the TV: ARC SETTINGS, then ARC LINK, switch ON. Enter its PIN here.", 13, DIM, false));
-        hostField = field("TV address, e.g. 192.168.0.20", InputType.TYPE_CLASS_TEXT);
+        // pairing section (built first so it can sit on top until the TV is paired)
+        LinearLayout pair = Hud.panel(this, "PAIRING (ONCE)");
+        pair.addView(Hud.label(this, "On the TV: ARC SETTINGS, then ARC LINK, switch ON. Enter its PIN here.",
+                11, Hud.DIM, false));
+        hostField = Hud.field(this, "TV address, e.g. 192.168.0.20", InputType.TYPE_CLASS_TEXT);
         hostField.setText(Store.host(this));
-        pinField = field("PIN shown on the TV", InputType.TYPE_CLASS_NUMBER);
+        pinField = Hud.field(this, "PIN shown on the TV", InputType.TYPE_CLASS_NUMBER);
         pinField.setText(Store.pin(this));
-        col.addView(hostField);
-        col.addView(pinField);
-        col.addView(button("FIND THE TV", this::findTv));
-        col.addView(button("SAVE AND TEST", this::saveAndTest));
+        pair.addView(hostField);
+        pair.addView(pinField);
+        LinearLayout pairRow = new LinearLayout(this);
+        pairRow.setOrientation(LinearLayout.HORIZONTAL);
+        pairRow.addView(Hud.button(this, "FIND THE TV", Hud.OUTLINE, true, this::findTv));
+        pairRow.addView(Hud.button(this, "SAVE AND TEST", Hud.SOLID, true, this::saveAndTest));
+        pair.addView(pairRow);
 
-        col.addView(heading("2. SEND"));
-        col.addView(button("BROWSE PHOTOS FOR THE TV", this::pickPhotos));
-        col.addView(text("Scroll your whole gallery, tap a photo and it stays on the TV until you pick another. "
-                + "The TV gets small TV-sized copies; your originals stay here.", 13, DIM, false));
-        col.addView(button("PICK A VIDEO TO PLAY ON THE TV", this::pickVideo));
-        col.addView(text("The video stays on this phone and streams to the TV. Keep Wi-Fi on.", 13, DIM, false));
-        linkField = field("Paste a YouTube link or web address", InputType.TYPE_TEXT_VARIATION_URI);
-        col.addView(linkField);
-        col.addView(button("SEND LINK TO THE TV", this::sendLink));
-        col.addView(text("Tip: in YouTube, Chrome or Gallery use Share, then ARC LINK (TV).", 13, DIM, false));
+        // what to send
+        LinearLayout tilesA = new LinearLayout(this);
+        tilesA.setOrientation(LinearLayout.HORIZONTAL);
+        tilesA.addView(Hud.tile(this, Hud.ICON_PHOTO, "PHOTOS", true, this::pickPhotos));
+        tilesA.addView(Hud.tile(this, Hud.ICON_VIDEO, "VIDEO", true, this::pickVideo));
+        final LinearLayout link = Hud.panel(this, "SEND A LINK");
+        LinearLayout tilesB = new LinearLayout(this);
+        tilesB.setOrientation(LinearLayout.HORIZONTAL);
+        tilesB.addView(Hud.tile(this, Hud.ICON_LINK, "LINK", true, new Runnable() {
+            @Override
+            public void run() {
+                scroll.smoothScrollTo(0, link.getTop());
+                linkField.requestFocus();
+            }
+        }));
+        tilesB.addView(Hud.tile(this, Hud.ICON_AUDIO, "AUDIO SOON", false, this::pickVideo));
 
-        col.addView(heading("3. KEEP IT WORKING"));
-        col.addView(button("ALLOW RUNNING IN THE BACKGROUND", this::allowBackground));
-        col.addView(text("Needed so the stream continues with the screen off. On Xiaomi/Poco also allow "
-                + "Autostart for this app in the phone's app settings.", 13, DIM, false));
+        linkField = Hud.field(this, "Paste a YouTube link or web address", InputType.TYPE_TEXT_VARIATION_URI);
+        link.addView(linkField);
+        link.addView(Hud.button(this, "SEND LINK TO THE TV", Hud.SOLID, false, this::sendLink));
+        link.addView(Hud.label(this, "Tip: in YouTube, Chrome or Gallery use Share, then ARC LINK (TV).",
+                11, Hud.DIM, false));
 
-        col.addView(heading("ABOUT"));
-        col.addView(text("Version " + version(), 14, WHITE, false));
-        col.addView(button("CHECK FOR UPDATE", this::update));
+        LinearLayout keep = Hud.panel(this, "KEEP IT WORKING");
+        keep.addView(Hud.button(this, "ALLOW RUNNING IN THE BACKGROUND", Hud.GOLDEN, false, this::allowBackground));
+        keep.addView(Hud.label(this, "Needed so the stream continues with the screen off. On Xiaomi/Poco also "
+                + "allow Autostart for this app in the phone's app settings.", 11, Hud.DIM, false));
+        keep.addView(Hud.label(this, "VERSION " + version(), 12, Hud.WHITE, true));
+        keep.addView(Hud.button(this, "CHECK FOR UPDATE", Hud.OUTLINE, false, this::update));
+
+        if (!Store.paired(this)) {
+            col.addView(pair, Hud.stack(this));
+        }
+        col.addView(tilesA);
+        col.addView(tilesB, Hud.stack(this));
+        col.addView(link, Hud.stack(this));
+        if (Store.paired(this)) {
+            col.addView(pair, Hud.stack(this));
+        }
+        col.addView(keep, Hud.stack(this));
 
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
@@ -100,7 +135,11 @@ public class MainActivity extends Activity {
     // ---------------------------------------------------------------- actions
 
     private void refreshStatus() {
-        status.setText(Store.paired(this) ? "Paired with the TV at " + Store.host(this) : "Not paired yet");
+        if (Store.paired(this)) {
+            status.set("PAIRED WITH THE TV AT " + Store.host(this), Hud.OK);
+        } else {
+            status.set("NOT PAIRED YET. PAIR WITH THE TV BELOW.", Hud.GOLD);
+        }
     }
 
     private void findTv() {
@@ -295,49 +334,4 @@ public class MainActivity extends Activity {
         return Math.round(v * density);
     }
 
-    private TextView text(String s, float size, int color, boolean bold) {
-        TextView t = new TextView(this);
-        t.setText(s);
-        t.setTextColor(color);
-        t.setTextSize(size);
-        t.setTypeface(Typeface.MONOSPACE, bold ? Typeface.BOLD : Typeface.NORMAL);
-        t.setPadding(0, dp(4), 0, dp(4));
-        return t;
-    }
-
-    private TextView heading(String s) {
-        TextView t = text(s, 15, GOLD, true);
-        t.setPadding(0, dp(26), 0, dp(6));
-        return t;
-    }
-
-    private EditText field(String hint, int inputType) {
-        EditText e = new EditText(this);
-        e.setHint(hint);
-        e.setHintTextColor(DIM);
-        e.setTextColor(WHITE);
-        e.setSingleLine(true);
-        e.setInputType(inputType);
-        e.setBackgroundColor(PANEL);
-        e.setPadding(dp(12), dp(12), dp(12), dp(12));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(8);
-        e.setLayoutParams(lp);
-        return e;
-    }
-
-    private Button button(String label, Runnable action) {
-        Button b = new Button(this);
-        b.setText(label);
-        b.setTextColor(INK);
-        b.setBackgroundColor(CYAN);
-        b.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        b.setOnClickListener((View v) -> action.run());
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(10);
-        b.setLayoutParams(lp);
-        return b;
-    }
 }

@@ -28,7 +28,6 @@ import android.view.WindowManager;
 import android.widget.AbsListView;
 import android.widget.AdapterView;
 import android.widget.BaseAdapter;
-import android.widget.Button;
 import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -116,9 +115,9 @@ public class PhotoActivity extends Activity {
 
     private ImageView preview;
     private TextView counter;
-    private TextView status;
-    private Button slideButton;
-    private Button intervalButton;
+    private Hud.Status status;
+    private TextView slideButton;
+    private TextView intervalButton;
     private GridView grid;
     private BaseAdapter adapter;
 
@@ -791,18 +790,34 @@ public class PhotoActivity extends Activity {
     }
 
     private void buildScreen() {
+        Hud.bars(this);
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
-        col.setBackgroundColor(INK);
-        col.setPadding(dp(16), dp(24), dp(16), dp(16));
-        col.addView(text("ARC LINK  PHOTOS", 18, WHITE, true));
-        status = text("", 13, CYAN, false);
+        col.setBackground(Hud.background(this));
+        col.setPadding(dp(16), dp(20), dp(16), dp(16));
+        LinearLayout brand = new LinearLayout(this);
+        brand.setOrientation(LinearLayout.HORIZONTAL);
+        brand.setGravity(Gravity.CENTER_VERTICAL);
+        brand.addView(new Hud.Ring(this), new LinearLayout.LayoutParams(dp(40), dp(40)));
+        LinearLayout names = new LinearLayout(this);
+        names.setOrientation(LinearLayout.VERTICAL);
+        names.setPadding(dp(12), 0, 0, 0);
+        names.addView(Hud.label(this, "PHOTOS", 18, Hud.WHITE, true));
+        names.addView(Hud.label(this, "CASTING TO THE TV", 10, Hud.CYAN, false));
+        brand.addView(names);
+        col.addView(brand);
+        col.addView(Hud.rule(this));
+        status = new Hud.Status(this);
         col.addView(status);
 
         preview = new ImageView(this);
         preview.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        preview.setBackgroundColor(0xFF000000);
-        col.addView(preview, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 2f));
+        preview.setBackground(Hud.box(this, 0xFF000000, Hud.FRAME));
+        preview.setPadding(dp(3), dp(3), dp(3), dp(3));
+        LinearLayout.LayoutParams previewLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                0, 2f);
+        previewLp.topMargin = dp(8);
+        col.addView(preview, previewLp);
         final GestureDetector swipe = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
             @Override
             public boolean onDown(MotionEvent e) {
@@ -890,26 +905,26 @@ public class PhotoActivity extends Activity {
         gridLp.topMargin = dp(8);
         col.addView(grid, gridLp);
 
-        counter = text("", 14, WHITE, true);
+        counter = Hud.label(this, "", 13, Hud.WHITE, true);
         counter.setGravity(Gravity.CENTER);
         col.addView(counter);
 
         LinearLayout row1 = new LinearLayout(this);
         row1.setOrientation(LinearLayout.HORIZONTAL);
-        row1.addView(button("PREV", new Runnable() {
+        row1.addView(Hud.button(this, "PREV", Hud.OUTLINE, true, new Runnable() {
             @Override
             public void run() {
                 go(pos < 0 ? 0 : pos - 1);
             }
         }));
-        slideButton = button("SLIDESHOW", new Runnable() {
+        slideButton = Hud.button(this, "SLIDESHOW", Hud.SOLID, true, new Runnable() {
             @Override
             public void run() {
                 toggleSlideshow();
             }
         });
         row1.addView(slideButton);
-        row1.addView(button("NEXT", new Runnable() {
+        row1.addView(Hud.button(this, "NEXT", Hud.OUTLINE, true, new Runnable() {
             @Override
             public void run() {
                 go(pos + 1);
@@ -919,50 +934,22 @@ public class PhotoActivity extends Activity {
 
         LinearLayout row2 = new LinearLayout(this);
         row2.setOrientation(LinearLayout.HORIZONTAL);
-        intervalButton = button("EVERY 4 s", new Runnable() {
+        intervalButton = Hud.button(this, "EVERY 4 s", Hud.OUTLINE, true, new Runnable() {
             @Override
             public void run() {
                 nextInterval();
             }
         });
         row2.addView(intervalButton);
-        row2.addView(button("STOP CASTING", new Runnable() {
+        row2.addView(Hud.button(this, "STOP CASTING", Hud.DANGER, true, new Runnable() {
             @Override
             public void run() {
                 stopCasting();
             }
         }));
         col.addView(row2);
-        col.addView(text("Tap a photo: it goes on the TV and stays until you pick another. Long-press photos "
-                + "to pick a set for the slideshow (none picked = all).", 11, DIM, false));
+        col.addView(Hud.label(this, "Tap a photo: it goes on the TV and stays until you pick another. "
+                + "Long-press photos to pick a set for the slideshow (none picked = all).", 10, Hud.DIM, false));
         setContentView(col);
-    }
-
-    private TextView text(String s, float size, int color, boolean bold) {
-        TextView t = new TextView(this);
-        t.setText(s);
-        t.setTextColor(color);
-        t.setTextSize(size);
-        t.setTypeface(Typeface.MONOSPACE, bold ? Typeface.BOLD : Typeface.NORMAL);
-        t.setPadding(0, dp(4), 0, dp(4));
-        return t;
-    }
-
-    private Button button(String label, final Runnable action) {
-        Button b = new Button(this);
-        b.setText(label);
-        b.setTextColor(INK);
-        b.setBackgroundColor(CYAN);
-        b.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
-        b.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                action.run();
-            }
-        });
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
-        lp.setMargins(dp(3), dp(8), dp(3), 0);
-        b.setLayoutParams(lp);
-        return b;
     }
 }
