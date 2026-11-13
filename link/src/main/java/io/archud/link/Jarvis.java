@@ -436,13 +436,14 @@ final class Jarvis {
                 return;
             case JarvisBrain.HELP:
                 say("You can say: open SmartTube. Play a song from a movie. Play a song by name. Show my photos. "
-                        + "Next. Stop. Or go to sleep.");
+                        + "Next. Pause. Resume. Forward or back 30 seconds. Volume up or down. Mute. Stop. "
+                        + "Or go to sleep.");
                 return;
             case JarvisBrain.ASK_PLAY:
                 say("Play what?");
                 return;
             case JarvisBrain.NEEDS_REMOTE:
-                say("I cannot do that yet. Volume and controls inside other apps need the remote feature.");
+                say("I cannot do that yet.");
                 return;
             case JarvisBrain.PHOTOS:
                 if (!Store.paired(app)) {
@@ -515,6 +516,29 @@ final class Jarvis {
                     break;
                 case JarvisBrain.TOGGLE:
                     audioControl(tv, pin, "/audiotoggle");
+                    break;
+                case JarvisBrain.PAUSE:
+                case JarvisBrain.RESUME:
+                    pauseResume(tv, pin, c.type == JarvisBrain.PAUSE);
+                    break;
+                case JarvisBrain.FORWARD:
+                case JarvisBrain.BACKWARD:
+                    seek(tv, pin, c.type == JarvisBrain.FORWARD, Integer.parseInt(c.arg));
+                    break;
+                case JarvisBrain.VOL_UP:
+                    volume(tv, pin, "up", c.arg);
+                    break;
+                case JarvisBrain.VOL_DOWN:
+                    volume(tv, pin, "down", c.arg);
+                    break;
+                case JarvisBrain.VOL_SET:
+                    volume(tv, pin, "set", c.arg);
+                    break;
+                case JarvisBrain.MUTE:
+                    volume(tv, pin, "mute", "0");
+                    break;
+                case JarvisBrain.UNMUTE:
+                    volume(tv, pin, "unmute", "0");
                     break;
                 case JarvisBrain.STOP:
                     TvClient.send(tv, "/imagestop", pin, new String[0], new byte[0]);
@@ -592,6 +616,57 @@ final class Jarvis {
                 say("Nothing is playing yet.");
             }
         }
+    }
+
+    /** ARC AUDIO's state on the TV: {playing ("1"/"0"), seconds in, length}, or null when it is not playing a song. */
+    private static String[] audioState(String tv, String pin) throws IOException {
+        TvClient.Reply r = TvClient.send(tv, "/audiostate", pin, new String[0], new byte[0]);
+        if (!r.ok() || "none".equals(r.text)) {
+            return null;
+        }
+        String[] p = r.text.split(" ");
+        return p.length < 6 ? null : new String[] {p[3], p[4], p[5]};
+    }
+
+    /** One of the media/volume controls of the TV, sent to whatever app is playing there. */
+    private static String key(String tv, String pin, String k, String n) throws IOException {
+        TvClient.Reply r = TvClient.post(tv, "/key", pin, "k=" + k + "&n=" + n);
+        if (r.code == 404) {
+            return "The TV app is out of date. Update it in ARC SETTINGS.";
+        }
+        return r.ok() ? r.text : "The TV said: " + r.text;
+    }
+
+    private static void pauseResume(String tv, String pin, boolean pause) throws IOException {
+        String[] a = lastSource == 2 ? audioState(tv, pin) : null;
+        if (a != null) {
+            // a song from this phone plays in ARC AUDIO, which has only a toggle
+            if ("1".equals(a[0]) == pause) {
+                TvClient.send(tv, "/audiotoggle", pin, new String[] {"X-Pos: 0"}, new byte[0]);
+            }
+            say(pause ? "Paused." : "Playing.");
+            return;
+        }
+        String reply = key(tv, pin, pause ? "pause" : "play", "1");
+        say("Done.".equals(reply) ? (pause ? "Paused." : "Playing.") : reply);
+    }
+
+    private static void seek(String tv, String pin, boolean forward, int seconds) throws IOException {
+        String[] a = lastSource == 2 ? audioState(tv, pin) : null;
+        if (a != null) {
+            int to = Math.max(0, Integer.parseInt(a[1]) + (forward ? seconds : -seconds));
+            TvClient.send(tv, "/audioseek", pin, new String[] {"X-Pos: " + to}, new byte[0]);
+            say(forward ? "Forward." : "Back.");
+            return;
+        }
+        // the TV's forward and rewind jump 10 seconds each
+        String reply = key(tv, pin, forward ? "forward" : "rewind", String.valueOf(Math.max(1, Math.round(seconds / 10f))));
+        say("Done.".equals(reply) ? (forward ? "Forward " + seconds + " seconds." : "Back " + seconds + " seconds.")
+                : reply);
+    }
+
+    private static void volume(String tv, String pin, String k, String n) throws IOException {
+        say(key(tv, pin, k, n));
     }
 
     private static void audioControl(String tv, String pin, String path) throws IOException {

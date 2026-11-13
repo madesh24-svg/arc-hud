@@ -24,6 +24,16 @@ final class JarvisBrain {
     static final int PLAY = 10;
     static final int ASK_PLAY = 11;
     static final int NEEDS_REMOTE = 12;
+    /** Controls for whatever is playing on the TV. arg: seconds for FORWARD/BACKWARD, percent for the volume. */
+    static final int PAUSE = 13;
+    static final int RESUME = 14;
+    static final int FORWARD = 15;
+    static final int BACKWARD = 16;
+    static final int VOL_UP = 17;
+    static final int VOL_DOWN = 18;
+    static final int VOL_SET = 19;
+    static final int MUTE = 20;
+    static final int UNMUTE = 21;
 
     /** One command. arg = app name or YouTube search; local = words to look for in the phone's songs, or null. */
     static final class Cmd {
@@ -71,11 +81,42 @@ final class JarvisBrain {
             + "|another result|another video|next result|something else|different one|a different one"
             + "|try another|try another one|not this one|play another|play another one|play another song"
             + "|play something else|play a different one|play a different song|one more|next video)$");
-    private static final Pattern PREV_P = Pattern.compile("^(?:previous|previous song|previous track|go back"
+    private static final Pattern PREV_P = Pattern.compile("^(?:previous|previous song|previous track"
             + "|play previous|last song|the last one|play the previous one|previous one)$");
-    private static final Pattern TOGGLE_P = Pattern.compile("^(?:pause|resume|continue|unpause|play|pause it"
-            + "|pause the music|pause the song|pause music|resume it|resume the music|resume the song|play it"
-            + "|continue playing|keep playing|hold on|wait)$");
+    private static final Pattern PAUSE_P = Pattern.compile("^(?:pause|pause it|pause that|pause this|pause the"
+            + " (?:video|music|song|movie|show|tv|playback|player)|pause (?:video|music|playback)|hold on|hold it"
+            + "|wait|freeze)$");
+    private static final Pattern RESUME_P = Pattern.compile("^(?:resume|continue|unpause|un pause|play|play it"
+            + "|play that|resume it|resume that|resume the (?:video|music|song|movie|show|playback)"
+            + "|resume (?:video|music|playback)|continue playing|keep playing|carry on|play again"
+            + "|continue the (?:video|music|song|movie|show))$");
+
+    /** Forward and back: the strong words may stand alone, the weak ones need an amount of time. */
+    private static final Pattern FWD_STRONG = Pattern.compile("^(?:fast forward|forward|forwards|skip forward"
+            + "|skip ahead|jump forward|jump ahead|go forward|move forward|seek forward|forward the video"
+            + "|forward it|fast forward it)(?: (.+))?$");
+    private static final Pattern FWD_WEAK = Pattern.compile("^(?:skip|jump|go ahead|move ahead|seek ahead|go) (.+)$");
+    private static final Pattern BACK_STRONG = Pattern.compile("^(?:rewind|rewind it|rewind the video|backward"
+            + "|backwards|go back|go backward|go backwards|skip back|skip backward|skip backwards|jump back"
+            + "|jump backward|move back|move backward|seek back|seek backward|back)(?: (.+))?$");
+    private static final Pattern TIME = Pattern.compile("\\d|\\b(?:second|seconds|sec|secs|minute|minutes|min|mins"
+            + "|half|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty|thirty|forty|fifty|sixty"
+            + "|ninety)\\b");
+    private static final Pattern UNIT = Pattern.compile("\\b(?:second|seconds|sec|secs|minute|minutes|min|mins)\\b");
+    private static final Pattern MINUTES = Pattern.compile("\\b(?:minute|minutes|min|mins)\\b");
+
+    private static final Pattern VOL_WORD = Pattern.compile("\\b(?:volume|louder|quieter|softer|mute|unmute|muted"
+            + "|sound|lower|raise|increase|decrease|reduce|turn it up|turn it down|crank|loud|quiet|silence)\\b");
+    private static final Pattern UNMUTE_P = Pattern.compile("\\bun ?mute\\b");
+    private static final Pattern MUTE_P = Pattern.compile("\\b(?:mute|muted|silence)\\b");
+    private static final Pattern VOL_UP_P = Pattern.compile("\\b(?:up|louder|raise|increase|higher|more|boost"
+            + "|crank|loud)\\b");
+    private static final Pattern VOL_DOWN_P = Pattern.compile("\\b(?:down|quieter|softer|lower|decrease|reduce"
+            + "|less|quiet|low)\\b");
+    private static final Pattern SMALL_P = Pattern.compile("\\b(?:bit|little|slightly|touch|notch)\\b");
+    private static final Pattern BIG_P = Pattern.compile("\\b(?:lot|much|way|loads)\\b");
+    private static final Pattern MAX_P = Pattern.compile("\\b(?:max|maximum|full|highest)\\b");
+    private static final Pattern MIN_P = Pattern.compile("\\b(?:minimum|lowest|zero)\\b");
 
     private static final Pattern PLAY_P = Pattern.compile("^(?:play|put on|listen to|hear|stream|sing|watch"
             + "|search for|search|find|look up|look for|queue up|queue|start playing|begin playing)(?: for)? ?(.*)$");
@@ -105,9 +146,8 @@ final class JarvisBrain {
             + "|switch to|take me to|bring up|fire up|load|show me|show|get me) (.+)$");
     private static final Pattern APP_FILLER = Pattern.compile("^(?:(?:the|my|app|up|application) )+");
     private static final Pattern APP_TAIL = Pattern.compile(" (?:app|application|please)$");
-    private static final Pattern REMOTE_WORD = Pattern.compile("\\b(?:volume|louder|quieter|softer|mute|unmute"
-            + "|brightness|rewind|fast forward|forward|power|shut down|restart|reboot|home screen|go home"
-            + "|subtitles|captions|full screen|turn up|turn down|turn on|switch on|switch off)\\b");
+    private static final Pattern REMOTE_WORD = Pattern.compile("\\b(?:brightness|power|shut down|restart|reboot"
+            + "|home screen|go home|subtitles|captions|full screen|turn on|switch on|switch off)\\b");
 
     private JarvisBrain() {
     }
@@ -153,8 +193,11 @@ final class JarvisBrain {
         if (PREV_P.matcher(t).matches()) {
             return Cmd.of(PREV);
         }
-        if (TOGGLE_P.matcher(t).matches()) {
-            return Cmd.of(TOGGLE);
+        if (PAUSE_P.matcher(t).matches()) {
+            return Cmd.of(PAUSE);
+        }
+        if (RESUME_P.matcher(t).matches()) {
+            return Cmd.of(RESUME);
         }
         if (OPEN_AUDIO_P.matcher(t).matches()) {
             return Cmd.of(OPEN_AUDIO);
@@ -166,6 +209,16 @@ final class JarvisBrain {
         Matcher play = PLAY_P.matcher(t);
         if (play.matches()) {
             return play(t, play.group(1).trim());
+        }
+        if (VOL_WORD.matcher(t).find()) {
+            Cmd v = volume(t);
+            if (v != null) {
+                return v;
+            }
+        }
+        Cmd seek = seek(t);
+        if (seek != null) {
+            return seek;
         }
         Matcher open = OPEN_P.matcher(t);
         if (open.matches()) {
@@ -182,6 +235,121 @@ final class JarvisBrain {
             return new Cmd(OPEN_APP, cleanApp(t), null, false, true);
         }
         return Cmd.of(UNKNOWN);
+    }
+
+    private static Cmd seek(String t) {
+        Matcher m = FWD_STRONG.matcher(t);
+        if (m.matches() && timeOk(m.group(1))) {
+            return new Cmd(FORWARD, String.valueOf(seconds(m.group(1))), null, false, false);
+        }
+        m = BACK_STRONG.matcher(t);
+        if (m.matches() && timeOk(m.group(1))) {
+            return new Cmd(BACKWARD, String.valueOf(seconds(m.group(1))), null, false, false);
+        }
+        m = FWD_WEAK.matcher(t);
+        if (m.matches() && UNIT.matcher(m.group(1)).find()) {
+            return new Cmd(FORWARD, String.valueOf(seconds(m.group(1))), null, false, false);
+        }
+        return null;
+    }
+
+    private static boolean timeOk(String rest) {
+        return rest == null || TIME.matcher(rest).find();
+    }
+
+    /** "30 seconds", "a minute", "half a minute", "two minutes"; 10 seconds when no amount is said. */
+    static int seconds(String rest) {
+        if (rest == null) {
+            return 10;
+        }
+        boolean minutes = MINUTES.matcher(rest).find();
+        int n;
+        if (rest.contains("half")) {
+            n = 30;
+            minutes = false;
+        } else {
+            n = number(rest);
+            if (n < 0) {
+                n = minutes ? 1 : 10;
+            }
+        }
+        int s = minutes ? n * 60 : n;
+        return Math.max(5, Math.min(300, s));
+    }
+
+    private static final String[] WORDS = {"zero", "one", "two", "three", "four", "five", "six", "seven", "eight",
+            "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen",
+            "nineteen", "twenty"};
+    private static final String[] TENS = {"thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"};
+
+    /** First number in the text, digits or words up to ninety-nine; -1 when there is none. */
+    static int number(String t) {
+        int total = -1;
+        for (String w : t.split(" ")) {
+            int v = -1;
+            if (w.matches("\\d{1,3}")) {
+                v = Integer.parseInt(w);
+            } else {
+                for (int i = 0; i < WORDS.length && v < 0; i++) {
+                    if (WORDS[i].equals(w)) {
+                        v = i;
+                    }
+                }
+                for (int i = 0; i < TENS.length && v < 0; i++) {
+                    if (TENS[i].equals(w)) {
+                        v = 30 + 10 * i;
+                    }
+                }
+            }
+            if (v < 0) {
+                continue;
+            }
+            if (total < 0) {
+                total = v;
+            } else if (total >= 20 && total % 10 == 0 && v < 10) {
+                total += v;
+            } else {
+                break;
+            }
+        }
+        return total;
+    }
+
+    /** Volume commands; null when the sentence names no direction, level or mute. */
+    private static Cmd volume(String t) {
+        if (UNMUTE_P.matcher(t).find()) {
+            return Cmd.of(UNMUTE);
+        }
+        if (MUTE_P.matcher(t).find()) {
+            return Cmd.of(MUTE);
+        }
+        boolean up = VOL_UP_P.matcher(t).find();
+        boolean down = VOL_DOWN_P.matcher(t).find() && !up;
+        int n = number(t);
+        if (MAX_P.matcher(t).find() && !down) {
+            return new Cmd(VOL_SET, "100", null, false, false);
+        }
+        if (MIN_P.matcher(t).find()) {
+            return new Cmd(VOL_SET, "0", null, false, false);
+        }
+        if (t.contains("half")) {
+            return new Cmd(VOL_SET, "50", null, false, false);
+        }
+        if (n >= 0 && n <= 100) {
+            boolean by = t.contains(" by ");
+            boolean to = t.contains(" to ") || t.contains(" at ");
+            if (!by && (to || (!up && !down))) {
+                return new Cmd(VOL_SET, String.valueOf(n), null, false, false);
+            }
+            if (up || down) {
+                return new Cmd(up ? VOL_UP : VOL_DOWN, String.valueOf(Math.max(1, n)), null, false, false);
+            }
+        }
+        if (!up && !down) {
+            return null;
+        }
+        int step = SMALL_P.matcher(t).find() ? 5 : (BIG_P.matcher(t).find() ? 25 : 10);
+        return new Cmd(up ? VOL_UP : VOL_DOWN, String.valueOf(step), null, false, false);
     }
 
     private static String cleanApp(String name) {

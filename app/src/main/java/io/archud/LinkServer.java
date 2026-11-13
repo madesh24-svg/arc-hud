@@ -5,9 +5,12 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
+import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
+import android.view.KeyEvent;
 import android.widget.Toast;
 
 import java.io.BufferedInputStream;
@@ -326,7 +329,8 @@ final class LinkServer {
                 }
                 image(s, in, path, length, session, (int) imagePos, (int) imageTotal);
             } else if ("POST".equals(method)
-                    && ("/apps".equals(path) || "/launch".equals(path) || "/ytplay".equals(path))) {
+                    && ("/apps".equals(path) || "/launch".equals(path) || "/ytplay".equals(path)
+                    || "/key".equals(path))) {
                 if (length < 0 || length > MAX_BODY) {
                     reply(s, 400, "text/plain", "Too long.");
                     return;
@@ -339,6 +343,8 @@ final class LinkServer {
                     apps(s);
                 } else if ("/launch".equals(path)) {
                     launch(s, form(body, "package"));
+                } else if ("/key".equals(path)) {
+                    key(s, form(body, "k"), (int) number(form(body, "n"), 0, 300));
                 } else {
                     ytplay(s, form(body, "q"), (int) number(form(body, "n"), 0, 19));
                 }
@@ -677,6 +683,79 @@ final class LinkServer {
             out.append(e.getValue()).append('\t').append(e.getKey()).append('\n');
         }
         reply(s, 200, "text/plain; charset=utf-8", out.toString());
+    }
+
+    /**
+     * Pause, play, forward and rewind for whatever app is playing (they go to its media session, 10 seconds per
+     * forward or rewind press), and the TV's volume. k = play, pause, forward, rewind, up, down, set, mute, unmute;
+     * n = presses for forward and rewind, percent for the volume.
+     */
+    private void key(Socket s, String k, int n) throws IOException {
+        AudioManager am = (AudioManager) app.getSystemService(Context.AUDIO_SERVICE);
+        int code = 0;
+        switch (k) {
+            case "play":
+                code = KeyEvent.KEYCODE_MEDIA_PLAY;
+                break;
+            case "pause":
+                code = KeyEvent.KEYCODE_MEDIA_PAUSE;
+                break;
+            case "forward":
+                code = KeyEvent.KEYCODE_MEDIA_FAST_FORWARD;
+                break;
+            case "rewind":
+                code = KeyEvent.KEYCODE_MEDIA_REWIND;
+                break;
+            default:
+                break;
+        }
+        if (code != 0) {
+            int times = code == KeyEvent.KEYCODE_MEDIA_PLAY || code == KeyEvent.KEYCODE_MEDIA_PAUSE
+                    ? 1 : Math.max(1, Math.min(30, n));
+            for (int i = 0; i < times; i++) {
+                long t = SystemClock.uptimeMillis();
+                am.dispatchMediaKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_DOWN, code, 0));
+                am.dispatchMediaKeyEvent(new KeyEvent(t, t, KeyEvent.ACTION_UP, code, 0));
+                if (i < times - 1) {
+                    try {
+                        Thread.sleep(250);
+                    } catch (InterruptedException e) {
+                        break;
+                    }
+                }
+            }
+            reply(s, 200, "text/plain", "Done.");
+            return;
+        }
+        int max = Math.max(1, am.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
+        int cur = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+        int target;
+        switch (k) {
+            case "up":
+                target = cur + Math.max(1, Math.round((n == 0 ? 10 : n) * max / 100f));
+                break;
+            case "down":
+                target = cur - Math.max(1, Math.round((n == 0 ? 10 : n) * max / 100f));
+                break;
+            case "set":
+                target = Math.round(Math.min(100, n) * max / 100f);
+                break;
+            case "mute":
+                am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, AudioManager.FLAG_SHOW_UI);
+                reply(s, 200, "text/plain", "Muted.");
+                return;
+            case "unmute":
+                am.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_UNMUTE,
+                        AudioManager.FLAG_SHOW_UI);
+                reply(s, 200, "text/plain", "Sound on.");
+                return;
+            default:
+                reply(s, 400, "text/plain", "Unknown control.");
+                return;
+        }
+        target = Math.max(0, Math.min(max, target));
+        am.setStreamVolume(AudioManager.STREAM_MUSIC, target, AudioManager.FLAG_SHOW_UI);
+        reply(s, 200, "text/plain", "Volume " + Math.round(100f * target / max) + " percent.");
     }
 
     /** Opens an installed app by package name. */
