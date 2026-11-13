@@ -483,6 +483,10 @@ final class NetScanner {
             }
             d.custom = dp.getString("name_" + k, "");
             d.isNew = first > 1 && now - first < NEW_FOR_MS && d.custom.isEmpty();
+            if (isRandomMac(k) && d.custom.isEmpty()) {
+                // a private (random) Wi-Fi address changes per network, so remembering it only leaves ghosts
+                continue;
+            }
             // remember the device, so it can still be listed (as offline) after it leaves the network
             e.putLong("last_" + k, d.lastSeen);
             e.putString("ip_" + k, d.ip);
@@ -710,24 +714,49 @@ final class NetScanner {
 
     // ---------------------------------------------------------------- remembered (offline) devices
 
-    /** Devices this TV has seen in the last 30 days that are not on the network now, most recent first. */
+    /** True for a locally administered (private, randomised) MAC, given as hex digits without separators. */
+    private static boolean isRandomMac(String k) {
+        try {
+            return k.length() >= 2 && (Integer.parseInt(k.substring(0, 2), 16) & 2) != 0;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Devices this TV has seen that are not on the network now, most recent first. Devices the user named stay
+     * 30 days; unnamed ones 7 days, and never when their address is a private random one or when another
+     * device now holds the same IP. Entries past their time are deleted.
+     */
     List<Device> offlineKnown() {
         SharedPreferences dp = ctx.getSharedPreferences(DEVICES, Context.MODE_PRIVATE);
         Set<String> online = new HashSet<>();
+        Set<String> onlineIps = new HashSet<>();
         for (Device d : snapshot()) {
+            onlineIps.add(d.ip);
             if (!d.mac.isEmpty()) {
                 online.add(key(d.mac));
             }
         }
         long now = System.currentTimeMillis();
         List<Device> out = new ArrayList<>();
+        SharedPreferences.Editor prune = dp.edit();
+        boolean pruned = false;
         for (String entry : dp.getAll().keySet()) {
             if (!entry.startsWith("last_")) {
                 continue;
             }
             String k = entry.substring(5);
             long last = dp.getLong(entry, 0);
-            if (online.contains(k) || last <= 0 || now - last > 30L * 24 * 3600 * 1000) {
+            boolean named = !dp.getString("name_" + k, "").isEmpty();
+            long keep = (named ? 30L : 7L) * 24 * 3600 * 1000;
+            boolean ghost = !named && (isRandomMac(k) || onlineIps.contains(dp.getString("ip_" + k, "")));
+            if (!online.contains(k) && (now - last > keep || ghost)) {
+                prune.remove("last_" + k).remove("ip_" + k).remove("vendor_" + k).remove("label_" + k);
+                pruned = true;
+                continue;
+            }
+            if (online.contains(k) || last <= 0) {
                 continue;
             }
             Device d = new Device(dp.getString("ip_" + k, ""));
@@ -739,6 +768,9 @@ final class NetScanner {
             d.firstSeen = dp.getLong("first_" + k, 0);
             d.offline = true;
             out.add(d);
+        }
+        if (pruned) {
+            prune.apply();
         }
         Collections.sort(out, (a, b) -> Long.compare(b.lastSeen, a.lastSeen));
         return out;
