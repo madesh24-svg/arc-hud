@@ -50,6 +50,7 @@ final class Hud {
     static final int ICON_COG = 4;
     static final int ICON_MEDIA = 5;
     static final int ICON_BACK = 6;
+    static final int ICON_MIC = 7;
 
     private Hud() {
     }
@@ -401,16 +402,18 @@ final class Hud {
             p.setAlpha(120);
             c.drawCircle(cx, cy, r, p);
             p.setAlpha(255);
-            p.setColor(CYAN);
+            // gold outer arcs while Jarvis is awake and listening for commands
+            boolean awake = Jarvis.awake();
+            p.setColor(awake ? GOLD : CYAN);
             oval.set(cx - r, cy - r, cx + r, cy + r);
             c.drawArc(oval, angle, 60, false, p);
             c.drawArc(oval, angle + 180, 60, false, p);
-            p.setColor(GOLD);
+            p.setColor(awake ? CYAN : GOLD);
             float r2 = r * 0.62f;
             oval.set(cx - r2, cy - r2, cx + r2, cy + r2);
             c.drawArc(oval, -angle * 1.7f, 80, false, p);
             p.setStyle(Paint.Style.FILL);
-            p.setColor(CYAN);
+            p.setColor(awake ? GOLD : CYAN);
             c.drawCircle(cx, cy, p.getStrokeWidth() * 1.3f, p);
             p.setStyle(Paint.Style.STROKE);
         }
@@ -475,6 +478,13 @@ final class Hud {
                 path.lineTo(w * 0.40f, h * 0.66f);
                 path.close();
                 c.drawPath(path, p);
+            } else if (kind == ICON_MIC) {
+                r.set(w * 0.36f, h * 0.10f, w * 0.64f, h * 0.58f);
+                c.drawRoundRect(r, w * 0.14f, w * 0.14f, p);
+                r.set(w * 0.22f, h * 0.30f, w * 0.78f, h * 0.76f);
+                c.drawArc(r, 0, 180, false, p);
+                c.drawLine(w * 0.5f, h * 0.76f, w * 0.5f, h * 0.92f, p);
+                c.drawLine(w * 0.34f, h * 0.92f, w * 0.66f, h * 0.92f, p);
             } else if (kind == ICON_BACK) {
                 path.reset();
                 path.moveTo(w * 0.62f, h * 0.2f);

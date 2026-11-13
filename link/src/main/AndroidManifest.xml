@@ -24,6 +24,19 @@
     <!-- Browsing the phone's songs in ARC AUDIO. Songs are read only when you play them. -->
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
+    <!-- Jarvis: listens through the phone's speech recognition only while ARC LINK is open on screen. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Android 11 and later: lets the app find the phone's speech recognizer and voice. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
     <application
         android:allowBackup="false"
         android:icon="@drawable/icon"
@@ -74,6 +87,7 @@
         <activity
             android:name=".AudioActivity"
             android:exported="false"
+            android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize" />
 
         <!-- ARC PHOTOS pager: the photo on this screen is the photo on the TV. -->

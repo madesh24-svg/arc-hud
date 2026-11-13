@@ -3,6 +3,8 @@ package io.archud;
 import android.content.ActivityNotFoundException;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
@@ -25,7 +27,10 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.Enumeration;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -299,6 +304,23 @@ final class LinkServer {
                     return;
                 }
                 image(s, in, path, length, session, (int) imagePos, (int) imageTotal);
+            } else if ("POST".equals(method)
+                    && ("/apps".equals(path) || "/launch".equals(path) || "/ytplay".equals(path))) {
+                if (length < 0 || length > MAX_BODY) {
+                    reply(s, 400, "text/plain", "Too long.");
+                    return;
+                }
+                if (!authorized(s, pin)) {
+                    return;
+                }
+                String body = readBody(in, (int) length);
+                if ("/apps".equals(path)) {
+                    apps(s);
+                } else if ("/launch".equals(path)) {
+                    launch(s, form(body, "package"));
+                } else {
+                    ytplay(s, form(body, "q"), (int) number(form(body, "n"), 0, 19));
+                }
             } else if ("POST".equals(method) && path.startsWith("/audio")) {
                 if (!authorized(s, pin)) {
                     return;
@@ -612,6 +634,87 @@ final class LinkServer {
                 part.delete();
             }
         }
+    }
+
+    // ---------------------------------------------------------------- voice commands from the phone
+
+    /** The apps that can be opened from the TV's home, one "name TAB package" per line. */
+    private void apps(Socket s) throws IOException {
+        PackageManager pm = app.getPackageManager();
+        Map<String, String> found = new LinkedHashMap<>();
+        for (String category : new String[] {Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER}) {
+            List<ResolveInfo> list = pm.queryIntentActivities(new Intent(Intent.ACTION_MAIN).addCategory(category), 0);
+            for (ResolveInfo ri : list) {
+                String name = ri.activityInfo.packageName;
+                if (!found.containsKey(name) && found.size() < 150) {
+                    found.put(name, String.valueOf(ri.loadLabel(pm)).replace('\t', ' ').replace('\n', ' '));
+                }
+            }
+        }
+        StringBuilder out = new StringBuilder();
+        for (Map.Entry<String, String> e : found.entrySet()) {
+            out.append(e.getValue()).append('\t').append(e.getKey()).append('\n');
+        }
+        reply(s, 200, "text/plain; charset=utf-8", out.toString());
+    }
+
+    /** Opens an installed app by package name. */
+    private void launch(Socket s, String pkg) throws IOException {
+        if (!pkg.matches("[A-Za-z0-9._]{3,100}")) {
+            reply(s, 400, "text/plain", "Bad app name.");
+            return;
+        }
+        PackageManager pm = app.getPackageManager();
+        Intent open = pm.getLeanbackLaunchIntentForPackage(pkg);
+        if (open == null) {
+            open = pm.getLaunchIntentForPackage(pkg);
+        }
+        if (open == null) {
+            reply(s, 404, "text/plain", "That app is not installed on the TV.");
+            return;
+        }
+        app.startActivity(open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        reply(s, 200, "text/plain", "Opened.");
+    }
+
+    /**
+     * Searches SmartTube (through its own search provider, no internet needed from ARC) and plays result
+     * number n; the answer names what is playing. When SmartTube gives no result its search screen opens.
+     */
+    private void ytplay(Socket s, String query, int n) throws IOException {
+        if (query.isEmpty() || query.length() > 120) {
+            reply(s, 400, "text/plain", "Nothing to search for.");
+            return;
+        }
+        List<SearchResult> results;
+        try {
+            results = new SmartTubeProvider().search(app, query);
+        } catch (IOException e) {
+            reply(s, 502, "text/plain", "SmartTube did not answer. Is it installed on the TV?");
+            return;
+        }
+        SearchResult pick = null;
+        SearchResult all = null;
+        int seen = 0;
+        for (SearchResult r : results) {
+            if (r.pinned) {
+                all = r;
+            } else if (seen++ == n) {
+                pick = r;
+            }
+        }
+        if (pick == null && seen > 0 && n >= seen) {
+            reply(s, 404, "text/plain", "There are no more results.");
+            return;
+        }
+        SearchResult chosen = pick != null ? pick : all;
+        if (chosen == null) {
+            reply(s, 404, "text/plain", "SmartTube found nothing.");
+            return;
+        }
+        app.startActivity(new Intent(chosen.intent).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        reply(s, 200, "text/plain; charset=utf-8", pick != null ? "Playing " + pick.title
+                : "Opened SmartTube's search for " + query);
     }
 
     // ---------------------------------------------------------------- songs from the phone

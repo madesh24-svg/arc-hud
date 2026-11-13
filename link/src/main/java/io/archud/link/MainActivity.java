@@ -16,12 +16,14 @@ import android.view.View;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import java.io.IOException;
 
 /** Pair with the TV once; send a video or a link; keep sharing alive; update. */
-public class MainActivity extends Activity {
+public class MainActivity extends JarvisActivity {
+    private static final int REQUEST_MIC = 41;
     private static final int CYAN = 0xFF50DCFF;
     private static final int GOLD = 0xFFFFB93C;
     private static final int WHITE = 0xFFEBFAFF;
@@ -33,6 +35,10 @@ public class MainActivity extends Activity {
     private EditText hostField;
     private EditText pinField;
     private Hud.Status status;
+    private Hud.Status voice;
+    private LinearLayout jarvisTile;
+    private TextView spokenButton;
+    private TextView sleepButton;
     private LinearLayout settingsPanel;
     private volatile boolean busy;
 
@@ -74,8 +80,13 @@ public class MainActivity extends Activity {
         status = new Hud.Status(this);
         LinearLayout.LayoutParams statusLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT);
-        statusLp.bottomMargin = dp(14);
+        statusLp.bottomMargin = dp(6);
         col.addView(status, statusLp);
+        voice = new Hud.Status(this);
+        LinearLayout.LayoutParams voiceLp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT);
+        voiceLp.bottomMargin = dp(14);
+        col.addView(voice, voiceLp);
 
         // pairing section (built first so it can sit on top until the TV is paired)
         LinearLayout pair = Hud.panel(this, "PAIRING (ONCE)");
@@ -97,6 +108,17 @@ public class MainActivity extends Activity {
         LinearLayout boxes = new LinearLayout(this);
         boxes.setOrientation(LinearLayout.HORIZONTAL);
         boxes.addView(Hud.tile(this, Hud.ICON_MEDIA, "MULTIMEDIA", true, this::openMultimedia));
+        jarvisTile = Hud.tile(this, Hud.ICON_MIC, jarvisLabel(), true, this::toggleJarvis);
+        boxes.addView(jarvisTile);
+
+        LinearLayout jarvis = Hud.panel(this, "JARVIS (VOICE)");
+        jarvis.addView(Hud.label(this, "Say \"Jarvis\" or \"arc arc\" while this app is open, then a command: "
+                + "open SmartTube, play a song from Kantara, show my photos, next, stop, go to sleep.",
+                11, Hud.DIM, false));
+        spokenButton = Hud.button(this, spokenLabel(), Hud.OUTLINE, false, this::toggleSpoken);
+        sleepButton = Hud.button(this, sleepLabel(), Hud.OUTLINE, false, this::cycleSleep);
+        jarvis.addView(spokenButton);
+        jarvis.addView(sleepButton);
 
         LinearLayout keep = Hud.panel(this, "KEEP IT WORKING");
         keep.addView(Hud.button(this, "ALLOW RUNNING IN THE BACKGROUND", Hud.GOLDEN, false, this::allowBackground));
@@ -109,6 +131,7 @@ public class MainActivity extends Activity {
         settingsPanel = new LinearLayout(this);
         settingsPanel.setOrientation(LinearLayout.VERTICAL);
         settingsPanel.addView(pair, Hud.stack(this));
+        settingsPanel.addView(jarvis, Hud.stack(this));
         settingsPanel.addView(keep, Hud.stack(this));
         settingsPanel.setVisibility(Store.paired(this) ? View.GONE : View.VISIBLE);
 
@@ -129,6 +152,64 @@ public class MainActivity extends Activity {
             status.set("PAIRED WITH THE TV AT " + Store.host(this), Hud.OK);
         } else {
             status.set("NOT PAIRED YET. TAP THE COG TO PAIR.", Hud.GOLD);
+        }
+    }
+
+    @Override
+    protected Hud.Status voiceLine() {
+        return voice;
+    }
+
+    private String jarvisLabel() {
+        return Store.voiceOn(this) ? "JARVIS ON" : "JARVIS OFF";
+    }
+
+    private String spokenLabel() {
+        return Store.spoken(this) ? "SPOKEN REPLIES: ON" : "SPOKEN REPLIES: OFF";
+    }
+
+    private String sleepLabel() {
+        int m = Store.sleepMinutes(this);
+        return m == 0 ? "SLEEP AGAIN AFTER: NEVER" : "SLEEP AGAIN AFTER: " + m + " MIN";
+    }
+
+    private void toggleJarvis() {
+        if (Store.voiceOn(this)) {
+            setJarvis(false);
+        } else if (Jarvis.hasMic(this)) {
+            setJarvis(true);
+        } else {
+            requestPermissions(new String[] {Manifest.permission.RECORD_AUDIO}, REQUEST_MIC);
+        }
+    }
+
+    private void setJarvis(boolean on) {
+        Store.setVoiceOn(this, on);
+        ((TextView) jarvisTile.getChildAt(1)).setText(jarvisLabel());
+        Jarvis.settingsChanged();
+    }
+
+    private void toggleSpoken() {
+        Store.setSpoken(this, !Store.spoken(this));
+        spokenButton.setText(spokenLabel());
+    }
+
+    private void cycleSleep() {
+        int m = Store.sleepMinutes(this);
+        Store.setSleepMinutes(this, m == 0 ? 5 : (m == 5 ? 15 : 0));
+        sleepButton.setText(sleepLabel());
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_MIC) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                setJarvis(true);
+            } else {
+                message("Jarvis cannot listen without microphone access. Allow it in the phone's app settings "
+                        + "(Apps, ARC LINK, Permissions).");
+            }
         }
     }
 

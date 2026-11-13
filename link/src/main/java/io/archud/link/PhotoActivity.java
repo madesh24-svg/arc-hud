@@ -57,7 +57,7 @@ import java.util.concurrent.RejectedExecutionException;
  * polled so that LEFT/RIGHT on the TV remote moves the selection here too. Optional slideshow: long-press photos
  * to pick a set; with none picked it plays the whole gallery.
  */
-public class PhotoActivity extends Activity {
+public class PhotoActivity extends JarvisActivity {
     static final int MAX_PHOTOS = 200;
     /** Start this screen with this extra set to true to browse the whole phone gallery. */
     static final String EXTRA_GALLERY = "gallery";

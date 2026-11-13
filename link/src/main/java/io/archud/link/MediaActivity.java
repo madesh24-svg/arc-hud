@@ -13,7 +13,7 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 
 /** MULTIMEDIA: everything you send to the TV to look at or listen to (photos, video, link, audio). */
-public class MediaActivity extends Activity {
+public class MediaActivity extends JarvisActivity {
     private static final int PICK_VIDEO = 7;
 
     private float density;

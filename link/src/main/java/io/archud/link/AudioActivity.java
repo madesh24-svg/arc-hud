@@ -3,6 +3,7 @@ package io.archud.link;
 import android.Manifest;
 import android.app.Activity;
 import android.content.ContentUris;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
 import android.database.Cursor;
@@ -55,7 +56,9 @@ import java.util.concurrent.RejectedExecutionException;
  * polled so the TV remote (pause, next, previous) is followed here. Shuffle applies to the next queue started;
  * repeat applies at once.
  */
-public class AudioActivity extends Activity {
+public class AudioActivity extends JarvisActivity {
+    /** Start this screen with these words (from Jarvis) to find them among the songs and play them. */
+    static final String EXTRA_PLAY_QUERY = "play_query";
     private static final int REQUEST_AUDIO = 31;
     private static final long POLL_MS = 1500;
     /** The TV takes about 32 MB per song; longer files are left out of the list. */
@@ -108,6 +111,8 @@ public class AudioActivity extends Activity {
     private String host;
     private String pin;
     private float density;
+    /** Words to play as soon as the song list has loaded (set by a voice command). */
+    private String voiceQuery;
     private int qpos = -1;
     private int expectPos = -1;
     private long expectUntil;
@@ -153,8 +158,32 @@ public class AudioActivity extends Activity {
             finish();
             return;
         }
+        voiceQuery = getIntent().getStringExtra(EXTRA_PLAY_QUERY);
         loadSongs();
         handler.postDelayed(poll, POLL_MS);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        String q = intent.getStringExtra(EXTRA_PLAY_QUERY);
+        if (q != null) {
+            playWords(q);
+        }
+    }
+
+    /** Filters the list to these words and plays what matches, first match first. */
+    private void playWords(String words) {
+        if (all.isEmpty()) {
+            voiceQuery = words;
+            return;
+        }
+        voiceQuery = null;
+        search.setText(words);
+        if (!shown.isEmpty()) {
+            playQueue(new ArrayList<>(shown), 0);
+        }
     }
 
     @Override
@@ -443,6 +472,9 @@ public class AudioActivity extends Activity {
                             } else {
                                 status.set(found.size() + " SONGS. TAP ONE TO PLAY IT ON THE TV."
                                         + (tooBig > 0 ? " " + tooBig + " OVER 31 MB LEFT OUT." : ""), Hud.CYAN);
+                                if (voiceQuery != null) {
+                                    playWords(voiceQuery);
+                                }
                             }
                         }
                     });
@@ -466,11 +498,19 @@ public class AudioActivity extends Activity {
     }
 
     private void applyFilter() {
-        String q = search.getText().toString().trim().toLowerCase(Locale.ROOT);
+        // every word typed (or spoken) must be somewhere in the title or the artist
+        List<String> words = LocalSongs.words(search.getText().toString());
         List<Song> out = new ArrayList<>();
         for (Song s : all) {
-            if (q.isEmpty() || s.title.toLowerCase(Locale.ROOT).contains(q)
-                    || s.artist.toLowerCase(Locale.ROOT).contains(q)) {
+            String hay = (s.title + " " + s.artist).toLowerCase(Locale.ROOT);
+            boolean match = true;
+            for (String w : words) {
+                if (!hay.contains(w)) {
+                    match = false;
+                    break;
+                }
+            }
+            if (match) {
                 out.add(s);
             }
         }
