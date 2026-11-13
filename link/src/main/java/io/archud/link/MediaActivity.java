@@ -74,7 +74,7 @@ public class MediaActivity extends Activity {
                 }
             }
         }));
-        tilesB.addView(Hud.tile(this, Hud.ICON_AUDIO, "AUDIO SOON", false, this::pickVideo));
+        tilesB.addView(Hud.tile(this, Hud.ICON_AUDIO, "AUDIO", true, this::pickAudio));
 
         linkField = Hud.field(this, "Paste a YouTube link or web address", InputType.TYPE_TEXT_VARIATION_URI);
         linkPanel.addView(linkField);
@@ -102,6 +102,12 @@ public class MediaActivity extends Activity {
     private void pickPhotos() {
         if (paired()) {
             startActivity(new Intent(this, PhotoActivity.class).putExtra(PhotoActivity.EXTRA_GALLERY, true));
+        }
+    }
+
+    private void pickAudio() {
+        if (paired()) {
+            startActivity(new Intent(this, AudioActivity.class));
         }
     }
 

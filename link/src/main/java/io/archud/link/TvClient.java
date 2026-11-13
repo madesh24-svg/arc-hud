@@ -96,6 +96,38 @@ final class TvClient {
         }
     }
 
+    /** POST a file read from a stream (a song), so it never has to sit in memory whole. */
+    static Reply send(String host, String path, String pin, String[] headers, InputStream body, long length)
+            throws IOException {
+        if (!isLocalIp(host)) {
+            throw new IOException("The TV address must be a home-network address like 192.168.0.20");
+        }
+        try (Socket s = new Socket()) {
+            s.connect(new InetSocketAddress(host, PORT), 3000);
+            s.setSoTimeout(30000);
+            StringBuilder head = new StringBuilder("POST ").append(path).append(" HTTP/1.1\r\nHost: ")
+                    .append(host).append(':').append(PORT).append("\r\nX-Pin: ").append(pin);
+            for (String h : headers) {
+                head.append("\r\n").append(h);
+            }
+            head.append("\r\nContent-Length: ").append(length).append("\r\nConnection: close\r\n\r\n");
+            OutputStream out = s.getOutputStream();
+            out.write(head.toString().getBytes(StandardCharsets.US_ASCII));
+            byte[] buf = new byte[32768];
+            long left = length;
+            while (left > 0) {
+                int n = body.read(buf, 0, (int) Math.min(buf.length, left));
+                if (n < 0) {
+                    throw new IOException("the song could not be read to the end");
+                }
+                out.write(buf, 0, n);
+                left -= n;
+            }
+            out.flush();
+            return read(s.getInputStream());
+        }
+    }
+
     private static Reply read(InputStream in) throws IOException {
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
         byte[] chunk = new byte[2048];

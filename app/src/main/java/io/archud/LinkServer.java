@@ -51,6 +51,9 @@ final class LinkServer {
     static final String VIDEO_PREFIX = "arclink-video-";
     /** Largest photo accepted; the phone sends TV-sized JPEGs, normally a few hundred KB. */
     private static final long MAX_IMAGE = 4L * 1024 * 1024;
+    /** Largest song accepted (a normal MP3 or AAC is 3 to 12 MB) and largest cover picture. */
+    private static final long MAX_AUDIO = 32L * 1024 * 1024;
+    private static final long MAX_COVER = 512L * 1024;
 
     private static LinkServer instance;
 
@@ -203,6 +206,8 @@ final class LinkServer {
             String session = "";
             long imagePos = 0;
             long imageTotal = 0;
+            String songTitle = "";
+            String songArtist = "";
             for (int i = 1; i < lines.length; i++) {
                 int c = lines[i].indexOf(':');
                 if (c <= 0) {
@@ -226,6 +231,10 @@ final class LinkServer {
                     imagePos = number(value, 0, 9999);
                 } else if ("x-total".equals(name)) {
                     imageTotal = number(value, 0, 9999);
+                } else if ("x-title".equals(name)) {
+                    songTitle = value;
+                } else if ("x-artist".equals(name)) {
+                    songArtist = value;
                 } else if ("x-size".equals(name)) {
                     try {
                         size = Long.parseLong(value);
@@ -290,6 +299,11 @@ final class LinkServer {
                     return;
                 }
                 image(s, in, path, length, session, (int) imagePos, (int) imageTotal);
+            } else if ("POST".equals(method) && path.startsWith("/audio")) {
+                if (!authorized(s, pin)) {
+                    return;
+                }
+                audio(s, in, path, length, session, (int) imagePos, (int) imageTotal, songTitle, songArtist, fileName);
             } else {
                 reply(s, 404, "text/plain", "Not found");
             }
@@ -383,10 +397,13 @@ final class LinkServer {
         }
         String playing = PlayerActivity.current();
         boolean photos = ImageStore.isOpen();
+        boolean songs = AudioStore.isOpen();
         for (File f : files) {
             if (f.getName().startsWith(VIDEO_PREFIX) && !f.getAbsolutePath().equals(playing)) {
                 f.delete();
             } else if (f.getName().startsWith(ImageStore.PREFIX) && !photos) {
+                f.delete();
+            } else if (f.getName().startsWith(AudioStore.PREFIX) && !songs) {
                 f.delete();
             }
         }
@@ -595,6 +612,126 @@ final class LinkServer {
                 part.delete();
             }
         }
+    }
+
+    // ---------------------------------------------------------------- songs from the phone
+
+    /**
+     * ARC AUDIO. /audioput stores one song (headers X-Session, X-Pos, X-Total, X-Title, X-Artist, X-Name;
+     * body = the audio file), /audiocover stores its cover picture, /audioplay makes a stored song the
+     * current one, /audiotoggle /audionext /audioprev /audioseek (X-Pos = seconds) control playback,
+     * /audiostate tells the phone what is playing (so the TV remote is followed), /audiostop closes it.
+     */
+    private void audio(Socket s, InputStream in, String path, long length, String session, int place, int count,
+            String rawTitle, String rawArtist, String rawName) throws IOException {
+        if ("/audiostate".equals(path)) {
+            reply(s, 200, "text/plain", AudioStore.state());
+            return;
+        }
+        if ("/audiostop".equals(path)) {
+            AudioActivity.closeIfOpen();
+            reply(s, 200, "text/plain", "Closed.");
+            return;
+        }
+        if ("/audiotoggle".equals(path) || "/audionext".equals(path) || "/audioprev".equals(path)
+                || "/audioseek".equals(path)) {
+            if (!AudioStore.isOpen()) {
+                reply(s, 409, "text/plain", "Nothing is playing.");
+                return;
+            }
+            AudioActivity.command(path.substring(6), place);
+            reply(s, 200, "text/plain", "OK");
+            return;
+        }
+        boolean put = "/audioput".equals(path);
+        boolean cover = "/audiocover".equals(path);
+        if (!put && !cover && !"/audioplay".equals(path)) {
+            reply(s, 404, "text/plain", "Not found");
+            return;
+        }
+        if (!session.matches("[A-Za-z0-9]{4,24}") || place < 1 || count < place) {
+            reply(s, 400, "text/plain", "Bad song request.");
+            return;
+        }
+        if (!put && !cover) {
+            if (!AudioStore.show(session, place, count)) {
+                reply(s, 409, "text/plain", "That song is not on the TV yet.");
+                return;
+            }
+            app.startActivity(new Intent(app, AudioActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            reply(s, 200, "text/plain", "Playing on the TV.");
+            return;
+        }
+        if (length <= 0 || length > (put ? MAX_AUDIO : MAX_COVER)) {
+            reply(s, 413, "text/plain", put ? "Song too large. The TV takes about 32 MB at most." : "Cover too large.");
+            return;
+        }
+        if (length + RESERVE > app.getCacheDir().getUsableSpace()) {
+            reply(s, 413, "text/plain", "Not enough free space on the TV.");
+            return;
+        }
+        File part = new File(app.getCacheDir(), AudioStore.PREFIX + session + "-" + place + (cover ? "c" : "") + ".part");
+        File done = AudioStore.file(app, session, place, cover ? "c.jpg" : audioExtension(rawName));
+        boolean ok = false;
+        try {
+            s.setSoTimeout(15000);
+            try (FileOutputStream out = new FileOutputStream(part)) {
+                byte[] buf = new byte[32768];
+                long left = length;
+                while (left > 0) {
+                    int n = in.read(buf, 0, (int) Math.min(buf.length, left));
+                    if (n < 0) {
+                        break;
+                    }
+                    out.write(buf, 0, n);
+                    left -= n;
+                }
+                if (left > 0) {
+                    throw new IOException("the file ended early");
+                }
+            }
+            if (done.exists() && !done.delete()) {
+                throw new IOException("could not replace the file");
+            }
+            if (!part.renameTo(done)) {
+                throw new IOException("could not store the file");
+            }
+            if (cover) {
+                if (!AudioStore.setCover(session, place, done)) {
+                    done.delete();
+                    reply(s, 409, "text/plain", "That song is not on the TV.");
+                    return;
+                }
+            } else {
+                AudioStore.add(session, place, count, new AudioStore.Track(done, songText(rawTitle, "Song " + place),
+                        songText(rawArtist, "")));
+            }
+            ok = true;
+            reply(s, 200, "text/plain", "OK");
+        } finally {
+            if (!ok) {
+                part.delete();
+            }
+        }
+    }
+
+    private static String songText(String raw, String fallback) {
+        if (raw == null || raw.isEmpty()) {
+            return fallback;
+        }
+        return decode(raw);
+    }
+
+    private static String audioExtension(String rawName) {
+        String name = rawName == null ? "" : decode(rawName);
+        int dot = name.lastIndexOf('.');
+        String ext = dot >= 0 ? name.substring(dot + 1).toLowerCase(Locale.US) : "";
+        for (String ok : new String[] {"mp3", "m4a", "aac", "ogg", "oga", "opus", "flac", "wav", "amr", "mid"}) {
+            if (ok.equals(ext)) {
+                return ext;
+            }
+        }
+        return "mp3";
     }
 
     // ---------------------------------------------------------------- video that stays on the phone

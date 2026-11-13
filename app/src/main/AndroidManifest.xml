@@ -101,6 +101,16 @@
             android:screenOrientation="landscape"
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
 
+        <!-- ARC AUDIO: plays songs a phone sends through ARC LINK; the song files are deleted on close. -->
+        <activity
+            android:name=".AudioActivity"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:exported="false"
+            android:label="ARC AUDIO"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
+
         <activity
             android:name=".DevicesActivity"
             android:exported="false"

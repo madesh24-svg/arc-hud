@@ -21,6 +21,8 @@
          TV-sized copies are sent to your TV. -->
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <!-- Browsing the phone's songs in ARC AUDIO. Songs are read only when you play them. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
     <application
         android:allowBackup="false"
@@ -67,6 +69,12 @@
         <activity
             android:name=".MediaActivity"
             android:exported="false" />
+
+        <!-- ARC AUDIO: song list and player controls; the song on this screen is the song on the TV. -->
+        <activity
+            android:name=".AudioActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
 
         <!-- ARC PHOTOS pager: the photo on this screen is the photo on the TV. -->
         <activity
