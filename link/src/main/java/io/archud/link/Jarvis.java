@@ -445,6 +445,10 @@ final class Jarvis {
             case JarvisBrain.NEEDS_REMOTE:
                 say("I cannot do that yet.");
                 return;
+            case JarvisBrain.SECURITY:
+                openSecurity();
+                say("Starting the security check of your Wi-Fi network.");
+                return;
             case JarvisBrain.PHOTOS:
                 if (!Store.paired(app)) {
                     say("Pair with the TV first.");
@@ -767,6 +771,18 @@ final class Jarvis {
                 Activity h = host;
                 if (h != null) {
                     h.startActivity(new Intent(h, PhotoActivity.class).putExtra(PhotoActivity.EXTRA_GALLERY, true));
+                }
+            }
+        });
+    }
+
+    private static void openSecurity() {
+        MAIN.post(new Runnable() {
+            @Override
+            public void run() {
+                Activity h = host;
+                if (h != null) {
+                    h.startActivity(new Intent(h, SecurityActivity.class).putExtra(SecurityActivity.EXTRA_AUTO, true));
                 }
             }
         });

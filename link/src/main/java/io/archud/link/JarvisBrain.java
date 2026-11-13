@@ -34,6 +34,7 @@ final class JarvisBrain {
     static final int VOL_SET = 19;
     static final int MUTE = 20;
     static final int UNMUTE = 21;
+    static final int SECURITY = 22;
 
     /** One command. arg = app name or YouTube search; local = words to look for in the phone's songs, or null. */
     static final class Cmd {
@@ -135,6 +136,9 @@ final class JarvisBrain {
     private static final Pattern NOT_A_SONG = Pattern.compile(".*\\b(?:video|trailer|movie|film|episode|full|live"
             + "|interview|news|match|cricket|podcast|documentary|series|show|teaser|scene|scenes|review)\\b.*");
 
+    private static final Pattern SCAN_P = Pattern.compile("^(?:(?:scan|check) (?:my |the |our )?(?:home )?"
+            + "(?:network|wi fi|wifi|lan)(?: security)?|(?:run |start |do )?(?:a |the )?(?:security|network)"
+            + " (?:check|scan)|is my (?:network|wi fi|wifi) (?:secure|safe)|security check)$");
     private static final Pattern PHOTO_WORD = Pattern.compile("\\b(?:photo|photos|picture|pictures|pics|pic|gallery"
             + "|images|image)\\b");
     private static final Pattern SHOW_VERB = Pattern.compile("^(?:open|show|see|view|display|go to|launch|take me to"
@@ -201,6 +205,9 @@ final class JarvisBrain {
         }
         if (OPEN_AUDIO_P.matcher(t).matches()) {
             return Cmd.of(OPEN_AUDIO);
+        }
+        if (SCAN_P.matcher(t).matches()) {
+            return Cmd.of(SECURITY);
         }
         if (PHOTO_WORD.matcher(t).find() && (SHOW_VERB.matcher(t).matches() || t.split(" ").length <= 3)
                 && !AUDIO_VERB.matcher(t).matches() && !t.startsWith("next ") && !t.startsWith("previous ")) {

@@ -51,6 +51,7 @@ final class Hud {
     static final int ICON_MEDIA = 5;
     static final int ICON_BACK = 6;
     static final int ICON_MIC = 7;
+    static final int ICON_SHIELD = 8;
 
     private Hud() {
     }
@@ -485,6 +486,21 @@ final class Hud {
                 c.drawArc(r, 0, 180, false, p);
                 c.drawLine(w * 0.5f, h * 0.76f, w * 0.5f, h * 0.92f, p);
                 c.drawLine(w * 0.34f, h * 0.92f, w * 0.66f, h * 0.92f, p);
+            } else if (kind == ICON_SHIELD) {
+                path.reset();
+                path.moveTo(w * 0.5f, h * 0.10f);
+                path.lineTo(w * 0.82f, h * 0.24f);
+                path.lineTo(w * 0.82f, h * 0.50f);
+                path.quadTo(w * 0.82f, h * 0.78f, w * 0.5f, h * 0.92f);
+                path.quadTo(w * 0.18f, h * 0.78f, w * 0.18f, h * 0.50f);
+                path.lineTo(w * 0.18f, h * 0.24f);
+                path.close();
+                c.drawPath(path, p);
+                path.reset();
+                path.moveTo(w * 0.35f, h * 0.50f);
+                path.lineTo(w * 0.46f, h * 0.62f);
+                path.lineTo(w * 0.66f, h * 0.38f);
+                c.drawPath(path, p);
             } else if (kind == ICON_BACK) {
                 path.reset();
                 path.moveTo(w * 0.62f, h * 0.2f);

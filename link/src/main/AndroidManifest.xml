@@ -2,7 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Local network only: talks to the TV's ARC HUD (port 8765), serves a video to that one TV and sends
-         it TV-sized copies of photos you choose.
+         it TV-sized copies of photos you choose. SECURITY CHECK probes the private addresses of the Wi-Fi the
+         phone is on, only when you start it.
          Internet is used only for "Check for update", HTTPS, restricted to this app's own GitHub releases. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -81,6 +82,11 @@
         <!-- MULTIMEDIA: photos, video, link (and audio) to the TV. -->
         <activity
             android:name=".MediaActivity"
+            android:exported="false" />
+
+        <!-- SECURITY CHECK: looks at the devices on the home Wi-Fi the phone is on and lists what they expose. -->
+        <activity
+            android:name=".SecurityActivity"
             android:exported="false" />
 
         <!-- ARC AUDIO: song list and player controls; the song on this screen is the song on the TV. -->

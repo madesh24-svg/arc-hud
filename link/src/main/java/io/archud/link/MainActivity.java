@@ -110,8 +110,10 @@ public class MainActivity extends JarvisActivity {
         boxes.addView(Hud.tile(this, Hud.ICON_MEDIA, "MULTIMEDIA", true, this::openMultimedia));
         jarvisTile = Hud.tile(this, Hud.ICON_MIC, jarvisLabel(), true, this::toggleJarvis);
         boxes.addView(jarvisTile);
+        boxes.addView(Hud.tile(this, Hud.ICON_SHIELD, "SECURITY", true,
+                () -> startActivity(new Intent(this, SecurityActivity.class))));
 
-        LinearLayout jarvis = Hud.panel(this, "JARVIS (VOICE)");
+        LinearLayout jarvis =Hud.panel(this, "JARVIS (VOICE)");
         jarvis.addView(Hud.label(this, "Say \"Jarvis\" or \"arc arc\" while this app is open, then a command: "
                 + "open SmartTube, play a song from Kantara, show my photos, next, stop, go to sleep.",
                 11, Hud.DIM, false));
