@@ -25,6 +25,9 @@ final class Prefs {
     /** ARC LINK (phone-to-TV link page) switch, default off, and its 4-digit PIN. */
     static final String LINK_ON = "link_on";
     static final String LINK_PIN = "link_pin";
+    /** BEACON: the private mapping of named devices this device can relay ARC LINK commands to
+     * (one "name\tip\tpin" line each); see BeaconMap. */
+    static final String BEACON_MAP = "beacon_map";
 
     static final String DEFAULT_TITLE = "A.R.C.  H.U.D.";
     static final String DEFAULT_SUBTITLE = "ADAPTIVE RESPONSE CONSOLE";

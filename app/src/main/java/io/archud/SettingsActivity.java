@@ -21,6 +21,7 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -137,6 +138,21 @@ public class SettingsActivity extends Activity {
         }
         row("About", "YOUTUBE -> SMARTTUBE, WEB -> BROWSER", null);
 
+        section("BEACON (CONTROL OTHER DEVICES)");
+        List<BeaconMap.Entry> mapped = BeaconMap.list(this);
+        if (mapped.isEmpty()) {
+            row("Mapped devices", "NONE", null);
+        } else {
+            for (BeaconMap.Entry e : mapped) {
+                row(e.name, e.ip, () -> editMapping(e.name, e.ip, e.pin));
+            }
+        }
+        row("Add a device", "", this::addMapping);
+        row("Find one on the network", "", this::findBeaconDevice);
+        row("Open remote", "", mapped.isEmpty() ? null : this::openBeacon);
+        row("About", "A DEVICE PAIRED WITH THIS ONE (KNOWS ITS ARC LINK PIN, ABOVE) CAN LIST THESE NAMES "
+                + "AND RELAY PLAY/PAUSE/VOLUME TO ANY OF THEM, WITHOUT EVER LEARNING THEIR OWN PINS.", null);
+
         section("ANIMATION");
         String anim = prefs.getString(Prefs.ANIM, "normal");
         row("Ring animation", anim.toUpperCase(), () -> {
@@ -144,6 +160,11 @@ public class SettingsActivity extends Activity {
             prefs.edit().putString(Prefs.ANIM, next).apply();
             rebuild();
         });
+
+        section("ADVANCED");
+        row("Try root + enable network adb (port 5555)", "", this::tryEnableAdb);
+        row("About", "ONLY WORKS IF THIS BOX HAS ACCESSIBLE ROOT; MAY SHOW AN APPROVAL PROMPT ON ITS OWN SCREEN. "
+                + "DOES NOTHING ON A NORMAL (NON-ROOTED) DEVICE.", null);
 
         section("ABOUT");
         row("Version", version(), null);
@@ -213,6 +234,105 @@ public class SettingsActivity extends Activity {
                 })
                 .setNegativeButton("CANCEL", null)
                 .show();
+    }
+
+    private void findBeaconDevice() {
+        Toast.makeText(this, "Searching the network ...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            String host = BeaconClient.find();
+            runOnUiThread(() -> {
+                if (host == null) {
+                    message("No other ARC LINK device found on this network.");
+                } else {
+                    editMapping("", host, "");
+                }
+            });
+        }, "beacon-find").start();
+    }
+
+    private void addMapping() {
+        editMapping("", "", "");
+    }
+
+    /** name empty = adding; otherwise editing that existing entry (REMOVE is offered). */
+    private void editMapping(String name, String ip, String pin) {
+        boolean editing = !name.isEmpty();
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        EditText nameIn = mappingField(name, "Name (e.g. Main TV)", false);
+        EditText ipIn = mappingField(ip, "Address (e.g. 192.168.1.9)", false);
+        EditText pinIn = mappingField(pin, "Its ARC LINK PIN", true);
+        box.addView(nameIn);
+        box.addView(ipIn);
+        box.addView(pinIn);
+        AlertDialog.Builder b = new AlertDialog.Builder(this)
+                .setTitle(editing ? "Edit mapped device" : "Add a mapped device")
+                .setView(box)
+                .setPositiveButton("SAVE", (d, w) -> {
+                    String newName = nameIn.getText().toString().trim();
+                    String newIp = ipIn.getText().toString().trim();
+                    String newPin = pinIn.getText().toString().trim();
+                    if (newName.isEmpty() || newIp.isEmpty() || newPin.length() != 4) {
+                        message("Need a name, an address, and the device's 4-digit ARC LINK PIN.");
+                        return;
+                    }
+                    if (editing && !newName.equalsIgnoreCase(name)) {
+                        BeaconMap.remove(this, name);
+                    }
+                    BeaconMap.put(this, newName, newIp, newPin);
+                    rebuild();
+                })
+                .setNegativeButton("CANCEL", null);
+        if (editing) {
+            b.setNeutralButton("REMOVE", (d, w) -> {
+                BeaconMap.remove(this, name);
+                rebuild();
+            });
+        }
+        b.show();
+    }
+
+    private EditText mappingField(String value, String hint, boolean numeric) {
+        EditText in = new EditText(this);
+        in.setSingleLine(true);
+        in.setHint(hint);
+        in.setText(value);
+        if (numeric) {
+            in.setInputType(InputType.TYPE_CLASS_NUMBER);
+        }
+        return in;
+    }
+
+    private void openBeacon() {
+        startActivity(new Intent(this, BeaconActivity.class));
+    }
+
+    /** Best-effort: asks for root and, if granted, turns on adb-over-network without needing a USB cable
+     * or a "Wireless debugging" setting (this box's Android TV version has neither). Does nothing if the
+     * box has no accessible root. */
+    private void tryEnableAdb() {
+        Toast.makeText(this, "Trying ...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            String result;
+            try {
+                Process p = Runtime.getRuntime().exec(new String[] {"su", "0", "sh", "-c",
+                        "setprop service.adb.tcp.port 5555; "
+                                + "(stop adbd || setprop ctl.stop adbd); sleep 1; "
+                                + "(start adbd || setprop ctl.start adbd)"});
+                int code = p.waitFor();
+                result = code == 0
+                        ? "Requested. If this box has accessible root, adb should now be listening on port 5555 "
+                                + "— try \"adb connect <its address>:5555\" from the PC."
+                        : "su ran but returned an error (exit " + code + "). This box may not grant root to apps.";
+            } catch (IOException e) {
+                result = "No usable 'su' on this device (" + e.getMessage() + "). Root is not accessible here.";
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                result = "Interrupted.";
+            }
+            final String shown = result;
+            runOnUiThread(() -> message(shown));
+        }, "try-adb").start();
     }
 
     private void useAsScreensaver() {
@@ -353,7 +473,7 @@ public class SettingsActivity extends Activity {
                 .remove(Prefs.TITLE).remove(Prefs.SUBTITLE).remove(Prefs.SALUTATION)
                 .remove(Prefs.SSID).remove(Prefs.MAC).remove(Prefs.SHOW_STATUS).remove(Prefs.ANIM)
                 .remove(Prefs.HIDDEN).remove(Prefs.FAVS).remove(Prefs.NEVER_ASK).remove(Prefs.VOICE_TAKEOVER)
-                .remove(Prefs.LINK_ON)
+                .remove(Prefs.LINK_ON).remove(Prefs.BEACON_MAP)
                 .apply();
         LinkServer.sync(this);
         Toast.makeText(this, "Settings reset", Toast.LENGTH_SHORT).show();

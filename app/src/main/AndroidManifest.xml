@@ -127,6 +127,13 @@
             android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
 
         <activity
+            android:name=".BeaconActivity"
+            android:exported="false"
+            android:label="BEACON REMOTE"
+            android:screenOrientation="landscape"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar.Fullscreen" />
+
+        <activity
             android:name=".DevicesActivity"
             android:exported="false"
             android:label="NETWORK DEVICES"

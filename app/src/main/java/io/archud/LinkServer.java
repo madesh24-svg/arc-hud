@@ -353,6 +353,20 @@ final class LinkServer {
                     return;
                 }
                 audio(s, in, path, length, session, (int) imagePos, (int) imageTotal, songTitle, songArtist, fileName);
+            } else if ("POST".equals(method) && ("/beacon/list".equals(path) || "/beacon/send".equals(path))) {
+                if (length < 0 || length > MAX_BODY) {
+                    reply(s, 400, "text/plain", "Too long.");
+                    return;
+                }
+                if (!authorized(s, pin)) {
+                    return;
+                }
+                String body = readBody(in, (int) length);
+                if ("/beacon/list".equals(path)) {
+                    beaconList(s);
+                } else {
+                    beaconSend(s, form(body, "name"), form(body, "k"), (int) number(form(body, "n"), 0, 300));
+                }
             } else {
                 reply(s, 404, "text/plain", "Not found");
             }
@@ -935,6 +949,33 @@ final class LinkServer {
             }
         }
         return "mp3";
+    }
+
+    // ---------------------------------------------------------------- BEACON: relay to other mapped devices
+
+    /** The names this device can relay commands to; never the addresses or PINs behind them. */
+    private void beaconList(Socket s) throws IOException {
+        StringBuilder out = new StringBuilder();
+        for (BeaconMap.Entry e : BeaconMap.list(app)) {
+            out.append(e.name).append('\n');
+        }
+        reply(s, 200, "text/plain; charset=utf-8", out.toString());
+    }
+
+    /** Relays k/n to the named device's own ARC LINK server, using the PIN stored for it here. The caller
+     * never learns that PIN; it only ever has to pair with this device. */
+    private void beaconSend(Socket s, String name, String k, int n) throws IOException {
+        BeaconMap.Entry e = BeaconMap.find(app, name);
+        if (e == null) {
+            reply(s, 404, "text/plain", "Not mapped: " + name);
+            return;
+        }
+        try {
+            BeaconClient.Reply r = BeaconClient.post(e.ip, "/key", e.pin, "k=" + k + "&n=" + n);
+            reply(s, r.code == 0 ? 502 : r.code, "text/plain", r.text.isEmpty() ? "Done." : r.text);
+        } catch (IOException ex) {
+            reply(s, 502, "text/plain", "Could not reach " + name + ".");
+        }
     }
 
     // ---------------------------------------------------------------- video that stays on the phone
