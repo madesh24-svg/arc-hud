@@ -109,6 +109,10 @@ public class HomeActivity extends Activity {
         card = new SetupCard(this);
         root.addView(card, new FrameLayout.LayoutParams(d(620), FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         setContentView(root);
+
+        // Once per process start (this activity is reused across Home presses, not recreated), not on
+        // every resume: checks quietly and only speaks up if an update is actually available.
+        UpdatePrompt.check(this, true);
     }
 
     @Override

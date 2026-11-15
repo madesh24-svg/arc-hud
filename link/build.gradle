@@ -16,6 +16,13 @@ android {
         // Same numbering as the TV app: both APKs come from one release, so one number serves both.
         versionCode runNumber
         versionName "1.0.${runNumber}"
+        // Heartbeat shared secret: from a CI repo secret (never committed); empty on a local build, which
+        // just makes the heartbeat a harmless no-op there. See .github/workflows/build.yml.
+        buildConfigField "String", "HEARTBEAT_TOKEN", "\"${System.getenv('ARC_HEARTBEAT_TOKEN') ?: ''}\""
+    }
+
+    buildFeatures {
+        buildConfig true
     }
 
     signingConfigs {

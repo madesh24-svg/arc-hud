@@ -191,7 +191,7 @@ final class LinkServer {
     }
 
     /** 0 = accepted; otherwise the HTTP status to answer with (403 wrong PIN, 429 locked). */
-    private synchronized int check(String given) {
+    private synchronized int check(String given, Socket s) {
         long now = System.currentTimeMillis();
         if (now < lockedUntil) {
             return 429;
@@ -200,6 +200,7 @@ final class LinkServer {
         if (given != null && MessageDigest.isEqual(given.getBytes(StandardCharsets.UTF_8),
                 expected.getBytes(StandardCharsets.UTF_8))) {
             fails = 0;
+            Heartbeat.noteContact(s.getInetAddress().getHostAddress());
             return 0;
         }
         if (++fails >= MAX_FAILS) {
@@ -281,7 +282,7 @@ final class LinkServer {
                     reply(s, 400, "text/plain", "Too long.");
                     return;
                 }
-                int gate = check(pin);
+                int gate = check(pin, s);
                 if (gate == 429) {
                     reply(s, 429, "text/plain", "Too many wrong PINs. Wait a minute.");
                     return;
@@ -293,7 +294,7 @@ final class LinkServer {
                 String body = readBody(in, (int) length);
                 open(s, form(body, "url"));
             } else if ("POST".equals(method) && ("/videocheck".equals(path) || "/video".equals(path))) {
-                int gate = check(pin);
+                int gate = check(pin, s);
                 if (gate == 429) {
                     reply(s, 429, "text/plain", "Too many wrong PINs. Wait a minute.");
                     return;
@@ -313,7 +314,7 @@ final class LinkServer {
                     reply(s, 400, "text/plain", "Too long.");
                     return;
                 }
-                int gate = check(pin);
+                int gate = check(pin, s);
                 if (gate == 429) {
                     reply(s, 429, "text/plain", "Too many wrong PINs. Wait a minute.");
                     return;
@@ -587,7 +588,7 @@ final class LinkServer {
 
     /** Checks the PIN; on failure the reply has already been sent and false is returned. */
     private boolean authorized(Socket s, String given) throws IOException {
-        int gate = check(given);
+        int gate = check(given, s);
         if (gate == 0) {
             return true;
         }

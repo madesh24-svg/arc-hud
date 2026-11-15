@@ -9,9 +9,7 @@ import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.graphics.drawable.StateListDrawable;
-import android.net.Uri;
 import android.os.Bundle;
-import android.provider.Settings;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -44,7 +42,6 @@ public class SettingsActivity extends Activity {
     private SharedPreferences prefs;
     private ScreensaverSetup setup;
     private LinearLayout list;
-    private volatile boolean updating;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -412,60 +409,8 @@ public class SettingsActivity extends Activity {
     }
 
     private void update() {
-        if (updating) {
-            return;
-        }
-        updating = true;
         Toast.makeText(this, "Checking " + Updater.REPO + " ...", Toast.LENGTH_SHORT).show();
-        new Thread(() -> {
-            try {
-                Updater.Release r = Updater.latest();
-                runOnUiThread(() -> offerUpdate(r));
-            } catch (Exception e) {
-                runOnUiThread(() -> message("Could not check for updates.\n" + e.getMessage()));
-            } finally {
-                updating = false;
-            }
-        }, "update-check").start();
-    }
-
-    private void offerUpdate(Updater.Release r) {
-        int current = versionCode();
-        if (r.versionCode <= current) {
-            message("You have the latest version (" + version() + ").");
-            return;
-        }
-        String size = r.size > 0 ? " (" + Math.max(1, r.size / 1024) + " KB)" : "";
-        confirm("Update to " + r.name + size + "?\nOnly from " + Updater.REPO + ", signed with the same key.", () -> {
-            if (!getPackageManager().canRequestPackageInstalls()) {
-                Intent allow = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                        Uri.parse("package:" + getPackageName()));
-                if (allow.resolveActivity(getPackageManager()) != null) {
-                    message("Allow ARC HUD to install updates on the next screen, then press Update again.");
-                    startActivity(allow);
-                } else {
-                    message("This TV has no setting to allow app updates, and ARC HUD has not been "
-                            + "allowed yet. Nothing was changed.");
-                }
-                return;
-            }
-            Toast.makeText(this, "Downloading " + r.name + " ...", Toast.LENGTH_SHORT).show();
-            new Thread(() -> {
-                try {
-                    Updater.install(getApplicationContext(), r);
-                } catch (Exception e) {
-                    runOnUiThread(() -> message("Update failed. Nothing was changed.\n" + e.getMessage()));
-                }
-            }, "update-install").start();
-        });
-    }
-
-    private int versionCode() {
-        try {
-            return getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
-        } catch (PackageManager.NameNotFoundException e) {
-            return Integer.MAX_VALUE;
-        }
+        UpdatePrompt.check(this, false);
     }
 
     private void reset() {

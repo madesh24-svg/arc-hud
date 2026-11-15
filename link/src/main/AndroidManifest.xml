@@ -4,7 +4,9 @@
     <!-- Local network only: talks to the TV's ARC HUD (port 8765), serves a video to that one TV and sends
          it TV-sized copies of photos you choose. SECURITY CHECK probes the private addresses of the Wi-Fi the
          phone is on, only when you start it.
-         Internet is used only for "Check for update", HTTPS, restricted to this app's own GitHub releases. -->
+         Internet is used for "Check for update" (HTTPS, restricted to this app's own GitHub releases) and for
+         a small heartbeat every ~10 minutes to a fixed address (keeps our own Oracle Always Free VM active;
+         see Heartbeat.java), nothing else. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -110,6 +112,10 @@
 
         <receiver
             android:name=".InstallReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".HeartbeatReceiver"
             android:exported="false" />
     </application>
 </manifest>

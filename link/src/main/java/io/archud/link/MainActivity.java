@@ -145,6 +145,9 @@ public class MainActivity extends JarvisActivity {
             requestPermissions(new String[] {Manifest.permission.POST_NOTIFICATIONS}, 1);
         }
         refreshStatus();
+        Heartbeat.sendInBackground();
+        Heartbeat.schedule(this);
+        UpdatePrompt.check(this, true);
     }
 
     // ---------------------------------------------------------------- actions
@@ -313,60 +316,8 @@ public class MainActivity extends JarvisActivity {
     }
 
     private void update() {
-        if (busy) {
-            return;
-        }
-        busy = true;
         Toast.makeText(this, "Checking for an update...", Toast.LENGTH_SHORT).show();
-        new Thread(() -> {
-            try {
-                Updater.Release r = Updater.latest();
-                runOnUiThread(() -> {
-                    busy = false;
-                    offerUpdate(r);
-                });
-            } catch (IOException e) {
-                runOnUiThread(() -> {
-                    busy = false;
-                    message("Could not check for updates.\n" + e.getMessage());
-                });
-            }
-        }, "arclink-update").start();
-    }
-
-    private void offerUpdate(Updater.Release r) {
-        if (r.versionCode <= versionCode()) {
-            message("You have the latest version (" + version() + ").");
-            return;
-        }
-        new AlertDialog.Builder(this)
-                .setMessage("Update to " + r.name + "?\nOnly from " + Updater.REPO + ", signed with the same key.")
-                .setPositiveButton("UPDATE", (d, w) -> {
-                    if (!getPackageManager().canRequestPackageInstalls()) {
-                        message("Allow ARC LINK to install updates on the next screen, then press Update again.");
-                        startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                                Uri.parse("package:" + getPackageName())));
-                        return;
-                    }
-                    Toast.makeText(this, "Downloading " + r.name + "...", Toast.LENGTH_SHORT).show();
-                    new Thread(() -> {
-                        try {
-                            Updater.install(getApplicationContext(), r);
-                        } catch (IOException e) {
-                            runOnUiThread(() -> message("Update failed. Nothing was changed.\n" + e.getMessage()));
-                        }
-                    }, "arclink-install").start();
-                })
-                .setNegativeButton("CANCEL", null)
-                .show();
-    }
-
-    private int versionCode() {
-        try {
-            return getPackageManager().getPackageInfo(getPackageName(), 0).versionCode;
-        } catch (PackageManager.NameNotFoundException e) {
-            return Integer.MAX_VALUE;
-        }
+        UpdatePrompt.check(this, false);
     }
 
     private String version() {

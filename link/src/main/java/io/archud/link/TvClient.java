@@ -70,7 +70,11 @@ final class TvClient {
             out.write(head.getBytes(StandardCharsets.US_ASCII));
             out.write(payload);
             out.flush();
-            return read(s.getInputStream());
+            Reply r = read(s.getInputStream());
+            if (r.ok()) {
+                Heartbeat.noteContact(host);
+            }
+            return r;
         }
     }
 
@@ -92,7 +96,11 @@ final class TvClient {
             out.write(head.toString().getBytes(StandardCharsets.US_ASCII));
             out.write(payload);
             out.flush();
-            return read(s.getInputStream());
+            Reply r = read(s.getInputStream());
+            if (r.ok()) {
+                Heartbeat.noteContact(host);
+            }
+            return r;
         }
     }
 
@@ -124,7 +132,11 @@ final class TvClient {
                 left -= n;
             }
             out.flush();
-            return read(s.getInputStream());
+            Reply r = read(s.getInputStream());
+            if (r.ok()) {
+                Heartbeat.noteContact(host);
+            }
+            return r;
         }
     }
 

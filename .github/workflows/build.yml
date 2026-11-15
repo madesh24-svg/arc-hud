@@ -28,6 +28,7 @@ jobs:
         env:
           ARCHUD_KEYSTORE: ${{ runner.temp }}/archud.p12
           ARCHUD_KEYSTORE_PASSWORD: ${{ secrets.ARCHUD_KEYSTORE_PASSWORD }}
+          ARC_HEARTBEAT_TOKEN: ${{ secrets.ARC_HEARTBEAT_TOKEN }}
         run: gradle assembleRelease --no-daemon --stacktrace
       - name: Rename
         run: |
