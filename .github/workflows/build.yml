@@ -20,6 +20,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+          # Off: a cross-run cache can reuse a compiled BuildConfig from before a secret (e.g.
+          # ARC_HEARTBEAT_TOKEN) was set, since Gradle doesn't fingerprint build.gradle's own
+          # System.getenv() reads the way it does declared task inputs. This repo builds rarely
+          # enough that losing the speed-up is worth never debugging that again.
+          cache-disabled: true
       - name: Restore signing key
         env:
           KEY_B64: ${{ secrets.ARCHUD_KEYSTORE_B64 }}
