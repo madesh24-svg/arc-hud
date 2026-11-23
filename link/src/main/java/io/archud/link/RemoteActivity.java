@@ -199,10 +199,16 @@ public class RemoteActivity extends JarvisActivity {
             status.setText("Pair the TV remote first (gold button below).");
             return;
         }
+        // YouTube draws its own search box and appends typed text to what is there, so when it is in front the
+        // text becomes a search link: that replaces the old query, submits it, and works for every language
+        if (AtvRemote.YOUTUBE.equals(AtvRemote.foreground())) {
+            runYoutubeSearch(app, host, value.trim());
+            return;
+        }
         new Thread(() -> {
             String msg;
             try {
-                // the text goes to whatever text box the TV has focused; some apps (YouTube) never confirm it
+                // the text goes to whatever text box the TV has focused
                 msg = AtvRemote.text(app, host, value)
                         ? "Typed on the TV."
                         : "Sent to the TV. Some apps, YouTube among them, do not confirm, so check the screen.";
@@ -232,6 +238,10 @@ public class RemoteActivity extends JarvisActivity {
             status.setText("Pair the TV remote first (gold button below).");
             return;
         }
+        runYoutubeSearch(app, host, value);
+    }
+
+    private void runYoutubeSearch(final Context app, final String host, final String value) {
         new Thread(() -> {
             String msg;
             try {
@@ -243,7 +253,12 @@ public class RemoteActivity extends JarvisActivity {
                 msg = "Could not reach the TV: " + e.getMessage();
             }
             final String shown = msg;
-            runOnUiThread(() -> status.setText(shown));
+            runOnUiThread(() -> {
+                status.setText(shown);
+                if (!shown.startsWith("Could not")) {
+                    textField.setText("");
+                }
+            });
         }, "atv-search").start();
     }
 

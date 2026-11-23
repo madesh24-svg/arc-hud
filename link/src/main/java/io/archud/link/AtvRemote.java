@@ -53,6 +53,14 @@ final class AtvRemote {
     private static Session current;
     private static String currentHost;
 
+    static final String YOUTUBE = "com.google.android.youtube.tv";
+    /** The app in front on the TV, as the TV reports it while the link is up; null when unknown. */
+    private static volatile String foreground;
+
+    static String foreground() {
+        return foreground;
+    }
+
     private AtvRemote() {
     }
 
@@ -500,8 +508,11 @@ final class AtvRemote {
                 Listener l = listener;
                 byte[] info = raw == null ? null : Pb.bytes(Pb.parse(raw), 1);
                 String pkg = info == null ? null : Pb.str(Pb.parse(info), 12);
-                if (pkg != null && l != null) {
-                    l.app(pkg);
+                if (pkg != null) {
+                    foreground = pkg;
+                    if (l != null) {
+                        l.app(pkg);
+                    }
                 }
             } else if (m.containsKey(22)) {
                 fieldUpdates++;
@@ -549,6 +560,7 @@ final class AtvRemote {
 
         void close() {
             dead = true;
+            foreground = null;
             try {
                 socket.close();
             } catch (IOException ignored) {
