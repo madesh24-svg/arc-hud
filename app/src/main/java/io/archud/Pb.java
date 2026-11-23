@@ -1,4 +1,4 @@
-package io.archud.link;
+package io.archud;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;

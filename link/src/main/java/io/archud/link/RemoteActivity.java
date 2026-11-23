@@ -3,6 +3,8 @@ package io.archud.link;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.View;
@@ -12,17 +14,24 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 
 import java.io.IOException;
+import java.net.URLEncoder;
 
 /**
- * REMOTE: Home, Back, arrows, OK, scroll, volume and screen on/off for the TV. Once paired with the TV's own remote
- * service the keys go through it and work in every app, YouTube included; until then (or if it fails) they go
- * through ARC remote control on the TV, which cannot steer apps that draw their own screens.
+ * REMOTE: Home, Back, arrows, OK, scroll, volume, typing and YouTube search for the TV. Every control goes to ARC on
+ * the TV with the PIN, exactly like photos and audio. ARC on the TV is the only remote the TV's own remote service
+ * knows (paired once, from any phone), so any number of phones can use it and none ever pairs with the TV.
  */
 public class RemoteActivity extends JarvisActivity {
+    private static final long POLL_MS = 2500;
+
     private float density;
     private TextView status;
+    private TextView info;
     private TextView pairButton;
     private EditText textField;
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private volatile boolean polling;
+    private volatile boolean busy;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -74,52 +83,94 @@ public class RemoteActivity extends JarvisActivity {
         col.addView(row(Hud.button(this, "TYPE ON THE TV", Hud.SOLID, true, this::sendText),
                 Hud.button(this, "SEARCH YOUTUBE", Hud.SOLID, true, this::searchYoutube)), Hud.stack(this));
 
-        pairButton = Hud.button(this, "PAIR TV REMOTE (WORKS IN YOUTUBE)", Hud.GOLDEN, false, this::pair);
+        pairButton = Hud.button(this, "PAIR ARC WITH THE TV REMOTE (ONCE)", Hud.GOLDEN, false, this::pair);
         col.addView(pairButton, Hud.stack(this));
 
-        status = Hud.label(this, "Pair the TV remote once so the keys work in every app. Until then they use ARC "
-                + "remote control on the TV.", 11, Hud.DIM, false);
-        status.setPadding(0, dp(14), 0, 0);
+        info = Hud.label(this, "", 11, Hud.CYAN, false);
+        info.setPadding(0, dp(14), 0, 0);
+        col.addView(info);
+        status = Hud.label(this, "", 11, Hud.DIM, false);
+        status.setPadding(0, dp(4), 0, 0);
         col.addView(status);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        refreshPairButton();
-        AtvRemote.setListener(new AtvRemote.Listener() {
-            @Override
-            public void volume(final int level, final int max, final boolean muted) {
-                runOnUiThread(() -> status.setText("Volume " + level + " of " + max + (muted ? " (muted)" : "")));
-            }
-
-            @Override
-            public void app(String packageName) {
-                // the TV also says which app is in front; not shown yet
-            }
-        });
-        final Context app = getApplicationContext();
-        final String host = Store.host(app);
-        if (Store.paired(app) && AtvRemote.paired(app, host)) {
-            new Thread(() -> {
-                try {
-                    AtvRemote.connect(app, host);
-                } catch (IOException ignored) {
-                    // the first key press tries again and shows the reason
-                }
-            }, "atv-connect").start();
-        }
+        polling = true;
+        handler.post(pollTask);
     }
 
     @Override
     protected void onPause() {
-        AtvRemote.setListener(null);
+        polling = false;
+        handler.removeCallbacksAndMessages(null);
         super.onPause();
     }
 
-    private void refreshPairButton() {
-        boolean ok = Store.paired(this) && AtvRemote.paired(this, Store.host(this));
-        pairButton.setText(ok ? "TV REMOTE PAIRED (TAP TO PAIR AGAIN)" : "PAIR TV REMOTE (WORKS IN YOUTUBE)");
+    private final Runnable pollTask = new Runnable() {
+        @Override
+        public void run() {
+            if (!polling) {
+                return;
+            }
+            fetchState();
+            handler.postDelayed(this, POLL_MS);
+        }
+    };
+
+    /** Asks ARC on the TV whether the module works, is paired, and what the volume is. */
+    private void fetchState() {
+        if (busy || !Store.paired(this)) {
+            return;
+        }
+        busy = true;
+        final Context app = getApplicationContext();
+        final String host = Store.host(app);
+        final String pin = Store.pin(app);
+        new Thread(() -> {
+            try {
+                TvClient.Reply r = TvClient.post(host, "/state", pin, "");
+                if (r.ok()) {
+                    final String text = r.text;
+                    runOnUiThread(() -> showState(text));
+                }
+            } catch (IOException ignored) {
+                // the TV may be off or asleep; the next poll tries again
+            } finally {
+                busy = false;
+            }
+        }, "arclink-state").start();
+    }
+
+    private static String value(String text, String key) {
+        for (String line : text.split("\n")) {
+            if (line.startsWith(key + "=")) {
+                return line.substring(key.length() + 1).trim();
+            }
+        }
+        return "";
+    }
+
+    private void showState(String text) {
+        boolean module = !"0".equals(value(text, "module"));
+        boolean paired = "1".equals(value(text, "paired"));
+        pairButton.setVisibility(module ? View.VISIBLE : View.GONE);
+        pairButton.setText(paired ? "TV REMOTE READY (TAP TO PAIR AGAIN)" : "PAIR ARC WITH THE TV REMOTE (ONCE)");
+        StringBuilder sb = new StringBuilder();
+        String vol = value(text, "volume");
+        if (vol.matches("\\d+/\\d+") && !vol.startsWith("0/")) {
+            sb.append("Volume ").append(vol.replace("/", " of "));
+            if ("1".equals(value(text, "muted"))) {
+                sb.append(" (muted)");
+            }
+        }
+        if (!module) {
+            sb.append("This TV has no Google remote service, so the keys use ARC remote control.");
+        } else if (!paired) {
+            sb.append(sb.length() > 0 ? "  " : "").append("Pair once from any phone so the keys work in every app.");
+        }
+        info.setText(sb.toString());
     }
 
     private LinearLayout row(View... items) {
@@ -138,22 +189,11 @@ public class RemoteActivity extends JarvisActivity {
     }
 
     private TextView key(String label, final String k) {
-        return Hud.button(this, label, Hud.OUTLINE, true, () -> send(k));
+        return Hud.button(this, label, Hud.OUTLINE, true, () -> send("/key", "k=" + k + "&n=1"));
     }
 
-    /** The name ARC remote control on the TV uses for a volume key. */
-    private static String fallbackKey(String k) {
-        switch (k) {
-            case "volup":
-                return "up";
-            case "voldown":
-                return "down";
-            default:
-                return k;
-        }
-    }
-
-    private void send(final String k) {
+    /** Sends one request to ARC on the TV and shows its reply on the status line. */
+    private void send(final String path, final String body) {
         if (!Store.paired(this)) {
             status.setText("Pair with the TV first: go back and open the cog on the home screen.");
             return;
@@ -161,108 +201,56 @@ public class RemoteActivity extends JarvisActivity {
         final Context app = getApplicationContext();
         final String host = Store.host(app);
         final String pin = Store.pin(app);
-        final int code = AtvRemote.keycode(k);
-        new Thread(() -> {
-            String msg = null;
-            if (code != 0 && AtvRemote.paired(app, host)) {
-                try {
-                    AtvRemote.key(app, host, code);
-                    msg = "Done.";
-                } catch (IOException e) {
-                    msg = null; // fall back to ARC remote control on the TV
-                }
-            }
-            if (msg == null) {
-                try {
-                    String n = k.startsWith("vol") ? "10" : "1";
-                    TvClient.Reply r = TvClient.post(host, "/key", pin, "k=" + fallbackKey(k) + "&n=" + n);
-                    msg = r.text.isEmpty() ? "The TV said " + r.code : r.text;
-                } catch (IOException e) {
-                    msg = "Could not reach the TV: " + e.getMessage();
-                }
-            }
-            final String shown = msg;
-            runOnUiThread(() -> status.setText(shown));
-        }, "arclink-remote").start();
-    }
-
-    /** Types the box's text into the text field selected on the TV (needs the paired TV remote). */
-    private void sendText() {
-        final String value = textField.getText().toString();
-        if (value.isEmpty()) {
-            status.setText("Type something first.");
-            return;
-        }
-        final Context app = getApplicationContext();
-        final String host = Store.host(app);
-        if (!Store.paired(app) || !AtvRemote.paired(app, host)) {
-            status.setText("Pair the TV remote first (gold button below).");
-            return;
-        }
-        // YouTube draws its own search box and appends typed text to what is there, so when it is in front the
-        // text becomes a search link: that replaces the old query, submits it, and works for every language
-        if (AtvRemote.YOUTUBE.equals(AtvRemote.foreground())) {
-            runYoutubeSearch(app, host, value.trim());
-            return;
-        }
         new Thread(() -> {
             String msg;
+            boolean ok = false;
             try {
-                // the text goes to whatever text box the TV has focused
-                msg = AtvRemote.text(app, host, value)
-                        ? "Typed on the TV."
-                        : "Sent to the TV. Some apps, YouTube among them, do not confirm, so check the screen.";
+                TvClient.Reply r = TvClient.post(host, path, pin, body);
+                msg = r.text.isEmpty() ? "The TV said " + r.code : r.text;
+                ok = r.ok();
             } catch (IOException e) {
                 msg = "Could not reach the TV: " + e.getMessage();
             }
             final String shown = msg;
+            final boolean sent = ok;
             runOnUiThread(() -> {
                 status.setText(shown);
-                if (!shown.startsWith("Could not")) {
+                if (sent && !path.equals("/key")) {
                     textField.setText("");
                 }
             });
-        }, "atv-text").start();
+        }, "arclink-remote").start();
     }
 
-    /** Opens YouTube's search results for the box's text on the TV (an app link, so no keyboard is needed). */
+    private static String enc(String s) {
+        try {
+            return URLEncoder.encode(s, "UTF-8");
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    /** Types the box's text on the TV. With YouTube in front, ARC turns it into a search that replaces the old one. */
+    private void sendText() {
+        String value = textField.getText().toString();
+        if (value.trim().isEmpty()) {
+            status.setText("Type something first.");
+            return;
+        }
+        send("/type", "text=" + enc(value));
+    }
+
+    /** Opens YouTube's results for the box's text on the TV, in any language. */
     private void searchYoutube() {
-        final String value = textField.getText().toString().trim();
+        String value = textField.getText().toString().trim();
         if (value.isEmpty()) {
             status.setText("Type what to search for first.");
             return;
         }
-        final Context app = getApplicationContext();
-        final String host = Store.host(app);
-        if (!Store.paired(app) || !AtvRemote.paired(app, host)) {
-            status.setText("Pair the TV remote first (gold button below).");
-            return;
-        }
-        runYoutubeSearch(app, host, value);
+        send("/ytsearch", "q=" + enc(value));
     }
 
-    private void runYoutubeSearch(final Context app, final String host, final String value) {
-        new Thread(() -> {
-            String msg;
-            try {
-                // YouTube reads a "+" literally, so spaces must be %20
-                String q = java.net.URLEncoder.encode(value, "UTF-8").replace("+", "%20");
-                AtvRemote.link(app, host, "https://www.youtube.com/results?search_query=" + q);
-                msg = "Searching YouTube on the TV.";
-            } catch (IOException e) {
-                msg = "Could not reach the TV: " + e.getMessage();
-            }
-            final String shown = msg;
-            runOnUiThread(() -> {
-                status.setText(shown);
-                if (!shown.startsWith("Could not")) {
-                    textField.setText("");
-                }
-            });
-        }, "atv-search").start();
-    }
-
-    // ------------------------------------------------------------------ one-time pairing
+    // ------------------------------------------------------------------ one-time pairing of ARC with the TV
 
     private void pair() {
         if (!Store.paired(this)) {
@@ -271,54 +259,38 @@ public class RemoteActivity extends JarvisActivity {
         }
         final Context app = getApplicationContext();
         final String host = Store.host(app);
+        final String pin = Store.pin(app);
         status.setText("Starting pairing. A 6-character code will appear on the TV.");
         new Thread(() -> {
             try {
-                final AtvRemote.Pairing p = new AtvRemote.Pairing(app, host);
-                runOnUiThread(() -> askCode(p));
+                TvClient.Reply r = TvClient.post(host, "/atvpair", pin, "");
+                final boolean ok = r.ok();
+                final String text = r.text;
+                runOnUiThread(() -> {
+                    if (ok) {
+                        askCode();
+                    } else {
+                        status.setText(text);
+                    }
+                });
             } catch (IOException e) {
                 final String m = e.getMessage();
-                runOnUiThread(() -> status.setText("Could not start pairing: " + m));
+                runOnUiThread(() -> status.setText("Could not reach the TV: " + m));
             }
-        }, "atv-pair").start();
+        }, "arclink-pair").start();
     }
 
-    private void askCode(final AtvRemote.Pairing p) {
+    private void askCode() {
         final EditText code = new EditText(this);
         code.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
         code.setHint("6-character code");
         new AlertDialog.Builder(this)
-                .setTitle("PAIR TV REMOTE")
-                .setMessage("Type the code the TV is showing.")
+                .setTitle("PAIR ARC WITH THE TV REMOTE")
+                .setMessage("Type the code the TV is showing. You only do this once for the whole family.")
                 .setView(code)
-                .setPositiveButton("PAIR", (d, w) -> finishPairing(p, code.getText().toString()))
-                .setNegativeButton("CANCEL", (d, w) -> p.close())
-                .setOnCancelListener(d -> p.close())
+                .setPositiveButton("PAIR", (d, w) -> send("/atvcode", "code=" + enc(code.getText().toString())))
+                .setNegativeButton("CANCEL", null)
                 .show();
-    }
-
-    private void finishPairing(final AtvRemote.Pairing p, final String code) {
-        final Context app = getApplicationContext();
-        final String host = Store.host(app);
-        new Thread(() -> {
-            String msg;
-            try {
-                p.finish(code);
-                msg = "Paired. The keys now work in every app, YouTube included.";
-                try {
-                    AtvRemote.connect(app, host);
-                } catch (IOException ignored) {
-                    // connects on the first key press instead
-                }
-            } catch (IOException e) {
-                msg = e.getMessage();
-            }
-            final String shown = msg;
-            runOnUiThread(() -> {
-                status.setText(shown);
-                refreshPairButton();
-            });
-        }, "atv-pair-finish").start();
     }
 
     private int dp(float v) {

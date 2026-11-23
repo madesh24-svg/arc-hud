@@ -1,4 +1,4 @@
-package io.archud.link;
+package io.archud;
 
 import android.content.Context;
 

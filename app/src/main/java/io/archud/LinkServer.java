@@ -331,7 +331,8 @@ final class LinkServer {
                 image(s, in, path, length, session, (int) imagePos, (int) imageTotal);
             } else if ("POST".equals(method)
                     && ("/apps".equals(path) || "/launch".equals(path) || "/ytplay".equals(path)
-                    || "/key".equals(path))) {
+                    || "/key".equals(path) || "/atvpair".equals(path) || "/atvcode".equals(path)
+                    || "/type".equals(path) || "/ytsearch".equals(path) || "/state".equals(path))) {
                 if (length < 0 || length > MAX_BODY) {
                     reply(s, 400, "text/plain", "Too long.");
                     return;
@@ -346,6 +347,16 @@ final class LinkServer {
                     launch(s, form(body, "package"));
                 } else if ("/key".equals(path)) {
                     key(s, form(body, "k"), (int) number(form(body, "n"), 0, 300));
+                } else if ("/atvpair".equals(path)) {
+                    atvPair(s);
+                } else if ("/atvcode".equals(path)) {
+                    atvCode(s, form(body, "code"));
+                } else if ("/type".equals(path)) {
+                    atvType(s, form(body, "text"));
+                } else if ("/ytsearch".equals(path)) {
+                    atvYoutube(s, form(body, "q"));
+                } else if ("/state".equals(path)) {
+                    atvState(s);
                 } else {
                     ytplay(s, form(body, "q"), (int) number(form(body, "n"), 0, 19));
                 }
@@ -410,6 +421,72 @@ final class LinkServer {
             got += n;
         }
         return new String(data, 0, got, StandardCharsets.UTF_8);
+    }
+
+    /** Starts pairing ARC with this TV's remote service; the TV shows a 6-character code on its screen. */
+    private void atvPair(Socket s) throws IOException {
+        try {
+            AtvRemote.startPairing(app);
+            reply(s, 200, "text/plain", "Look at the TV for a 6-character code, then send it.");
+        } catch (IOException e) {
+            reply(s, 409, "text/plain", "Could not start pairing: " + e.getMessage());
+        }
+    }
+
+    private void atvCode(Socket s, String code) throws IOException {
+        try {
+            AtvRemote.finishPairing(app, code);
+            reply(s, 200, "text/plain", "Paired. Every phone can now control this TV through ARC.");
+        } catch (IOException e) {
+            reply(s, 409, "text/plain", e.getMessage());
+        }
+    }
+
+    private void atvType(Socket s, String text) throws IOException {
+        if (text.isEmpty()) {
+            reply(s, 400, "text/plain", "Nothing to type.");
+        } else if (!AtvRemote.paired(app)) {
+            reply(s, 409, "text/plain", "Pair ARC with this TV's remote first.");
+        } else {
+            try {
+                reply(s, 200, "text/plain", AtvRemote.typeSmart(app, text));
+            } catch (IOException e) {
+                reply(s, 409, "text/plain", e.getMessage());
+            }
+        }
+    }
+
+    private void atvYoutube(Socket s, String query) throws IOException {
+        if (query.isEmpty()) {
+            reply(s, 400, "text/plain", "Nothing to search for.");
+        } else if (!AtvRemote.paired(app)) {
+            reply(s, 409, "text/plain", "Pair ARC with this TV's remote first.");
+        } else {
+            try {
+                AtvRemote.youtubeSearch(app, query);
+                reply(s, 200, "text/plain", "Searching YouTube on the TV.");
+            } catch (IOException e) {
+                reply(s, 409, "text/plain", e.getMessage());
+            }
+        }
+    }
+
+    /** What the phone's REMOTE screen shows: whether the module works here, is paired, the front app, the volume. */
+    private void atvState(Socket s) throws IOException {
+        boolean module = AtvRemote.available(app);
+        boolean paired = module && AtvRemote.paired(app);
+        if (paired) {
+            try {
+                AtvRemote.connect(app);
+            } catch (IOException e) {
+                paired = AtvRemote.paired(app);
+            }
+        }
+        String front = AtvRemote.foreground();
+        reply(s, 200, "text/plain", "module=" + (module ? 1 : 0) + "\npaired=" + (paired ? 1 : 0)
+                + "\nforeground=" + (front == null ? "" : front)
+                + "\nvolume=" + AtvRemote.volumeLevel() + "/" + AtvRemote.volumeMax()
+                + "\nmuted=" + (AtvRemote.volumeMuted() ? 1 : 0) + "\n");
     }
 
     private static String form(String body, String key) {
@@ -706,6 +783,32 @@ final class LinkServer {
      * n = presses for forward and rewind, percent for the volume.
      */
     private void key(Socket s, String k, int n) throws IOException {
+        // real key presses for every app through Google's own remote service, once ARC has paired with it
+        int atvCode = AtvRemote.keycode(k);
+        if (atvCode != 0 && AtvRemote.paired(app)) {
+            try {
+                int times = k.startsWith("nav") || k.startsWith("scroll") ? Math.max(1, Math.min(20, n)) : 1;
+                for (int i = 0; i < times; i++) {
+                    AtvRemote.key(app, atvCode);
+                    if (i < times - 1) {
+                        Thread.sleep(150);
+                    }
+                }
+                reply(s, 200, "text/plain", "Done.");
+                return;
+            } catch (IOException e) {
+                // fall through to the older routes below
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                reply(s, 200, "text/plain", "Interrupted.");
+                return;
+            }
+        }
+        if ("volup".equals(k)) {
+            k = "up";
+        } else if ("voldown".equals(k)) {
+            k = "down";
+        }
         if (ArcAccessibility.handles(k)) {
             String done = ArcAccessibility.run(k, n);
             if (done == null) {
