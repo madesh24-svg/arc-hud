@@ -23,7 +23,7 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.PrivateKey;
 import java.security.Signature;
-import java.security.interfaces.RSAPrivateCrtKey;
+import java.security.interfaces.RSAPrivateKey;
 import java.security.interfaces.RSAPublicKey;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.security.spec.RSAPublicKeySpec;
@@ -257,9 +257,11 @@ final class AdbClient {
                 f.setReadable(true, true);
             }
             PrivateKey p = kf.generatePrivate(new PKCS8EncodedKeySpec(Files.readAllBytes(f.toPath())));
-            RSAPrivateCrtKey crt = (RSAPrivateCrtKey) p;
-            publicKey = (RSAPublicKey) kf.generatePublic(new RSAPublicKeySpec(crt.getModulus(),
-                    crt.getPublicExponent()));
+            // this TV's crypto provider returns a plain RSA private key (not the CRT form), so the public half is
+            // rebuilt from its modulus and the standard exponent 65537 that key generation always uses
+            RSAPrivateKey rp = (RSAPrivateKey) p;
+            publicKey = (RSAPublicKey) kf.generatePublic(new RSAPublicKeySpec(rp.getModulus(),
+                    BigInteger.valueOf(65537)));
             privateKey = p;
         } catch (GeneralSecurityException | ClassCastException e) {
             throw new IOException("Could not load the adb key: " + e.getMessage());

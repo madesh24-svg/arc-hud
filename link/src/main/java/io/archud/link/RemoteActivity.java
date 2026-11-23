@@ -165,7 +165,7 @@ public class RemoteActivity extends JarvisActivity {
             }
         }
         String error = value(text, "error");
-        if (paired && !error.isEmpty()) {
+        if (!error.isEmpty()) {
             sb.append(sb.length() > 0 ? "  " : "").append("adb: ").append(error);
         }
         if (!module) {
