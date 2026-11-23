@@ -59,9 +59,13 @@ final class AdbClient {
     private static final int MAX_DATA = 256 * 1024;
     private static final byte[] SHA1_PREFIX = {0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a,
             0x05, 0x00, 0x04, 0x14};
-    /** The only key codes ARC will ever send: Home, Back, arrows, OK, menu, play/pause, scroll, volume, recents, sleep. */
+    /**
+     * The only key codes ARC will ever send: Home, Back, arrows, OK, menu, play/pause, scroll, volume, recents.
+     * Not the sleep and wake keys: on this kind of box adb's sleep is a real standby that drops Wi-Fi, so nothing
+     * could wake it again over the network (screen off and on go through the accessibility service instead).
+     */
     private static final Set<Integer> KEYS = new HashSet<>(Arrays.asList(
-            3, 4, 19, 20, 21, 22, 23, 24, 25, 82, 85, 92, 93, 164, 187, 223, 224));
+            3, 4, 19, 20, 21, 22, 23, 24, 25, 82, 85, 92, 93, 164, 187));
     private static final String UNAUTHORIZED = "ARC is not allowed to use adb on this TV. Enable real keys again.";
 
     private static volatile int state = OFF;
@@ -131,10 +135,6 @@ final class AdbClient {
                 return 25;
             case "mute":
                 return 164;
-            case "screenoff":
-                return 223;
-            case "screenon":
-                return 224;
             default:
                 return 0;
         }
