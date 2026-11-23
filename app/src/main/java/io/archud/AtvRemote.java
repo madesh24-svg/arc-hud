@@ -57,8 +57,20 @@ final class AtvRemote {
     private static volatile int volumeLevel = -1;
     private static volatile int volumeMax = -1;
     private static volatile boolean volumeMuted;
+    private static volatile String lastError = "";
 
     private AtvRemote() {
+    }
+
+    /** The last reason the link to the remote service failed, for the phone's status line and the TV's log. */
+    static String lastError() {
+        return lastError;
+    }
+
+    private static void note(String where, Exception e) {
+        String m = where + ": " + e;
+        lastError = m.replace('\n', ' ');
+        android.util.Log.w("ArcAtv", m, e);
     }
 
     // ------------------------------------------------------------------ state
@@ -170,7 +182,10 @@ final class AtvRemote {
         close();
         try {
             current = new Session(c.getApplicationContext());
+            lastError = "";
+            android.util.Log.i("ArcAtv", "link to the remote service is up");
         } catch (IOException e) {
+            note("connect", e);
             String m = String.valueOf(e.getMessage());
             if (m.contains("CERTIFICATE_UNKNOWN")) {
                 forget(c);
@@ -198,6 +213,7 @@ final class AtvRemote {
         try {
             session(c).key(code);
         } catch (IOException first) {
+            note("key", first);
             close();
             session(c).key(code);
         }
@@ -543,6 +559,7 @@ final class AtvRemote {
                 }
             } catch (IOException e) {
                 failure = e.getMessage();
+                note("link", e);
             } finally {
                 close();
             }

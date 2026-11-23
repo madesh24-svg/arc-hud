@@ -165,6 +165,10 @@ public class RemoteActivity extends JarvisActivity {
                 sb.append(" (muted)");
             }
         }
+        String error = value(text, "error");
+        if (paired && !error.isEmpty()) {
+            sb.append(sb.length() > 0 ? "  " : "").append("Remote service: ").append(error);
+        }
         if (!module) {
             sb.append("This TV has no Google remote service, so the keys use ARC remote control.");
         } else if (!paired) {

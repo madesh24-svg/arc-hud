@@ -486,7 +486,8 @@ final class LinkServer {
         reply(s, 200, "text/plain", "module=" + (module ? 1 : 0) + "\npaired=" + (paired ? 1 : 0)
                 + "\nforeground=" + (front == null ? "" : front)
                 + "\nvolume=" + AtvRemote.volumeLevel() + "/" + AtvRemote.volumeMax()
-                + "\nmuted=" + (AtvRemote.volumeMuted() ? 1 : 0) + "\n");
+                + "\nmuted=" + (AtvRemote.volumeMuted() ? 1 : 0)
+                + "\nerror=" + AtvRemote.lastError() + "\n");
     }
 
     private static String form(String body, String key) {
