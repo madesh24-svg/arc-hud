@@ -2,4 +2,6 @@
 <resources>
     <string name="app_name">ARC HUD</string>
     <string name="home_name">ARC HOME</string>
+    <string name="access_label">ARC remote control</string>
+    <string name="access_description">Lets your phone press Home, Back, the arrow keys and OK, scroll, and turn the screen off or on. It reads no text from the screen and sends nothing to the internet.</string>
 </resources>

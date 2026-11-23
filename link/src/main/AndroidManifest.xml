@@ -86,6 +86,11 @@
             android:name=".MediaActivity"
             android:exported="false" />
 
+        <!-- REMOTE: Home, Back, arrows, OK, scroll and screen on/off for any app on the TV. -->
+        <activity
+            android:name=".RemoteActivity"
+            android:exported="false" />
+
         <!-- SECURITY CHECK: looks at the devices on the home Wi-Fi the phone is on and lists what they expose. -->
         <activity
             android:name=".SecurityActivity"

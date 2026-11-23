@@ -158,6 +158,11 @@ public class SettingsActivity extends Activity {
             rebuild();
         });
 
+        section("REMOTE CONTROL");
+        row("Phone remote service", ArcAccessibility.running() ? "ON" : "OFF - TURN ON", this::openAccessibility);
+        row("About", "LETS THE PHONE PRESS HOME, BACK, ARROWS AND OK IN ANY APP. SWITCH IT ON UNDER SETTINGS, "
+                + "ACCESSIBILITY, SERVICES, ARC REMOTE CONTROL. IT READS NO SCREEN TEXT.", null);
+
         section("ADVANCED");
         row("Try root + enable network adb (port 5555)", "", this::tryEnableAdb);
         row("About", "ONLY WORKS IF THIS BOX HAS ACCESSIBLE ROOT; MAY SHOW AN APPROVAL PROMPT ON ITS OWN SCREEN. "
@@ -298,6 +303,14 @@ public class SettingsActivity extends Activity {
             in.setInputType(InputType.TYPE_CLASS_NUMBER);
         }
         return in;
+    }
+
+    private void openAccessibility() {
+        try {
+            startActivity(new Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS));
+        } catch (ActivityNotFoundException e) {
+            message("This box has no Accessibility screen. Look for it in the system Settings app.");
+        }
     }
 
     private void openBeacon() {

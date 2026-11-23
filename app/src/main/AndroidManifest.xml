@@ -21,6 +21,8 @@
          Android keeps it alive behind other apps, and is started again when the TV boots. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Lets the REMOTE CONTROL "screen on" command wake the display for a moment. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- Device list: local network only (enforced in NetPolicy.java); multicast for UPnP discovery. -->
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
@@ -163,6 +165,20 @@
         <service
             android:name=".LinkService"
             android:exported="false" />
+
+        <!-- REMOTE CONTROL: off until switched on by hand in Settings > Accessibility > Services. -->
+        <service
+            android:name=".ArcAccessibility"
+            android:exported="true"
+            android:label="@string/access_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/arc_accessibility" />
+        </service>
 
         <service
             android:name=".HudDream"

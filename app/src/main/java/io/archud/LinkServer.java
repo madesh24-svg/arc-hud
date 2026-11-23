@@ -706,6 +706,16 @@ final class LinkServer {
      * n = presses for forward and rewind, percent for the volume.
      */
     private void key(Socket s, String k, int n) throws IOException {
+        if (ArcAccessibility.handles(k)) {
+            String done = ArcAccessibility.run(k, n);
+            if (done == null) {
+                reply(s, 409, "text/plain", "Remote control is off on the TV. Turn on ARC remote control under "
+                        + "Settings > Accessibility > Services.");
+            } else {
+                reply(s, 200, "text/plain", done);
+            }
+            return;
+        }
         AudioManager am = (AudioManager) app.getSystemService(Context.AUDIO_SERVICE);
         int code = 0;
         switch (k) {

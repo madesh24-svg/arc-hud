@@ -544,6 +544,9 @@ final class Jarvis {
                 case JarvisBrain.UNMUTE:
                     volume(tv, pin, "unmute", "0");
                     break;
+                case JarvisBrain.NAV:
+                    say(key(tv, pin, c.arg, "1"));
+                    break;
                 case JarvisBrain.STOP:
                     TvClient.send(tv, "/imagestop", pin, new String[0], new byte[0]);
                     TvClient.send(tv, "/audiostop", pin, new String[0], new byte[0]);

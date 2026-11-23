@@ -35,6 +35,8 @@ final class JarvisBrain {
     static final int MUTE = 20;
     static final int UNMUTE = 21;
     static final int SECURITY = 22;
+    /** A key for any app on the TV (needs ARC remote control on the TV). arg = the TV's /key name. */
+    static final int NAV = 23;
 
     /** One command. arg = app name or YouTube search; local = words to look for in the phone's songs, or null. */
     static final class Cmd {
@@ -148,7 +150,21 @@ final class JarvisBrain {
             + "|play (?:some |my )?(?:music|songs))$");
     private static final Pattern OPEN_P = Pattern.compile("^(?:open up|open|launch|start up|start|run|go to"
             + "|switch to|take me to|bring up|fire up|load|show me|show|get me) (.+)$");
-    private static final Pattern APP_FILLER = Pattern.compile("^(?:(?:the|my|app|up|application) )+");
+    private static final Pattern NAV_DIR = Pattern.compile("^(?:go|move|press|navigate|arrow) (up|down|left|right)$");
+    private static final Pattern NAV_OK = Pattern.compile("^(?:ok|okay|select|enter|click|select it|click it"
+            + "|press ok|press okay|press select|press enter|press the ok button|ok button)$");
+    private static final Pattern NAV_HOME = Pattern.compile("^(?:home|press home|go home|go to home"
+            + "|go to the home screen|home screen|take me home)$");
+    private static final Pattern NAV_BACK = Pattern.compile("^(?:press back|back button|press the back button"
+            + "|navigate back|go back one screen|go back a screen)$");
+    private static final Pattern NAV_RECENT = Pattern.compile("^(?:recents|recent apps|show recents"
+            + "|show recent apps)$");
+    private static final Pattern NAV_SCROLL = Pattern.compile("^(?:scroll|page) (up|down)$");
+    private static final Pattern NAV_SCREEN_OFF = Pattern.compile("^(?:screen off|turn off the screen"
+            + "|turn the screen off|switch off the screen|switch the screen off)$");
+    private static final Pattern NAV_SCREEN_ON = Pattern.compile("^(?:screen on|turn on the screen"
+            + "|turn the screen on|wake up|wake the tv|wake up the tv)$");
+    private static final Pattern APP_FILLER =Pattern.compile("^(?:(?:the|my|app|up|application) )+");
     private static final Pattern APP_TAIL = Pattern.compile(" (?:app|application|please)$");
     private static final Pattern REMOTE_WORD = Pattern.compile("\\b(?:brightness|power|shut down|restart|reboot"
             + "|home screen|go home|subtitles|captions|full screen|turn on|switch on|switch off)\\b");
@@ -226,6 +242,10 @@ final class JarvisBrain {
         Cmd seek = seek(t);
         if (seek != null) {
             return seek;
+        }
+        String nav = nav(t);
+        if (nav != null) {
+            return new Cmd(NAV, nav, null, false, false);
         }
         Matcher open = OPEN_P.matcher(t);
         if (open.matches()) {
@@ -320,6 +340,37 @@ final class JarvisBrain {
             }
         }
         return total;
+    }
+
+    /** The TV key for a spoken navigation command (home, arrows, OK, scroll, screen), or null. */
+    private static String nav(String t) {
+        Matcher m = NAV_DIR.matcher(t);
+        if (m.matches()) {
+            return "nav" + m.group(1);
+        }
+        m = NAV_SCROLL.matcher(t);
+        if (m.matches()) {
+            return "scroll" + m.group(1);
+        }
+        if (NAV_OK.matcher(t).matches()) {
+            return "ok";
+        }
+        if (NAV_HOME.matcher(t).matches()) {
+            return "home";
+        }
+        if (NAV_BACK.matcher(t).matches()) {
+            return "back";
+        }
+        if (NAV_RECENT.matcher(t).matches()) {
+            return "recents";
+        }
+        if (NAV_SCREEN_OFF.matcher(t).matches()) {
+            return "screenoff";
+        }
+        if (NAV_SCREEN_ON.matcher(t).matches()) {
+            return "screenon";
+        }
+        return null;
     }
 
     /** Volume commands; null when the sentence names no direction, level or mute. */

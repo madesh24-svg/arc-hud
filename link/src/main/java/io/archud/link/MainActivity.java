@@ -137,7 +137,17 @@ public class MainActivity extends JarvisActivity {
         settingsPanel.addView(keep, Hud.stack(this));
         settingsPanel.setVisibility(Store.paired(this) ? View.GONE : View.VISIBLE);
 
+        LinearLayout boxes2 = new LinearLayout(this);
+        boxes2.setOrientation(LinearLayout.HORIZONTAL);
+        boxes2.addView(Hud.tile(this, Hud.ICON_COG, "REMOTE", true, this::openRemote));
+        for (int i = 0; i < 2; i++) {
+            View gap = new View(this);
+            gap.setLayoutParams(new LinearLayout.LayoutParams(0, 1, 1f));
+            boxes2.addView(gap);
+        }
+
         col.addView(boxes);
+        col.addView(boxes2);
         col.addView(settingsPanel);
 
         if (Build.VERSION.SDK_INT >= 33
@@ -292,6 +302,14 @@ public class MainActivity extends JarvisActivity {
                 message(shown);
             });
         }, "arclink-pair").start();
+    }
+
+    private void openRemote() {
+        if (!Store.paired(this)) {
+            needPairing();
+            return;
+        }
+        startActivity(new Intent(this, RemoteActivity.class));
     }
 
     private void openMultimedia() {
