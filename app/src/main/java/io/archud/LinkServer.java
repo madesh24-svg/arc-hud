@@ -50,6 +50,7 @@ final class LinkServer {
     static final int PORT = 8765;
     private static final int MAX_HEAD = 8192;
     private static final int MAX_BODY = 4096;
+    private static final String YOUTUBE = "com.google.android.youtube.tv";
     private static final int MAX_FAILS = 5;
     private static final long LOCK_MS = 60_000;
     /** Largest video accepted; the TV's free storage usually limits it first. */
@@ -331,7 +332,7 @@ final class LinkServer {
                 image(s, in, path, length, session, (int) imagePos, (int) imageTotal);
             } else if ("POST".equals(method)
                     && ("/apps".equals(path) || "/launch".equals(path) || "/ytplay".equals(path)
-                    || "/key".equals(path) || "/atvpair".equals(path) || "/atvcode".equals(path)
+                    || "/key".equals(path) || "/adbenable".equals(path)
                     || "/type".equals(path) || "/ytsearch".equals(path) || "/state".equals(path))) {
                 if (length < 0 || length > MAX_BODY) {
                     reply(s, 400, "text/plain", "Too long.");
@@ -347,10 +348,8 @@ final class LinkServer {
                     launch(s, form(body, "package"));
                 } else if ("/key".equals(path)) {
                     key(s, form(body, "k"), (int) number(form(body, "n"), 0, 300));
-                } else if ("/atvpair".equals(path)) {
-                    atvPair(s);
-                } else if ("/atvcode".equals(path)) {
-                    atvCode(s, form(body, "code"));
+                } else if ("/adbenable".equals(path)) {
+                    adbEnable(s);
                 } else if ("/type".equals(path)) {
                     atvType(s, form(body, "text"));
                 } else if ("/ytsearch".equals(path)) {
@@ -423,35 +422,29 @@ final class LinkServer {
         return new String(data, 0, got, StandardCharsets.UTF_8);
     }
 
-    /** Starts pairing ARC with this TV's remote service; the TV shows a 6-character code on its screen. */
-    private void atvPair(Socket s) throws IOException {
-        try {
-            AtvRemote.startPairing(app);
-            reply(s, 200, "text/plain", "Look at the TV for a 6-character code, then send it.");
-        } catch (IOException e) {
-            reply(s, 409, "text/plain", "Could not start pairing: " + e.getMessage());
+    /** Starts the one-time authorization of ARC's adb key; the TV then shows an ALLOW dialog to tap. */
+    private void adbEnable(Socket s) throws IOException {
+        if (!AdbClient.available()) {
+            reply(s, 409, "text/plain", "This TV does not offer network adb, so real keys are not available here.");
+            return;
         }
+        AdbClient.startEnabling(app);
+        reply(s, 200, "text/plain", "Look at the TV: tick Always allow and tap ALLOW.");
     }
 
-    private void atvCode(Socket s, String code) throws IOException {
-        try {
-            AtvRemote.finishPairing(app, code);
-            reply(s, 200, "text/plain", "Paired. Every phone can now control this TV through ARC.");
-        } catch (IOException e) {
-            reply(s, 409, "text/plain", e.getMessage());
-        }
-    }
-
+    /** Types text: YouTube gets a search link; any other app gets the text put into its selected text box. */
     private void atvType(Socket s, String text) throws IOException {
         if (text.isEmpty()) {
             reply(s, 400, "text/plain", "Nothing to type.");
-        } else if (!AtvRemote.paired(app)) {
-            reply(s, 409, "text/plain", "Pair ARC with this TV's remote first.");
+        } else if (YOUTUBE.equals(ArcAccessibility.foreground())) {
+            searchYoutube(s, text.trim());
         } else {
-            try {
-                reply(s, 200, "text/plain", AtvRemote.typeSmart(app, text));
-            } catch (IOException e) {
-                reply(s, 409, "text/plain", e.getMessage());
+            String done = ArcAccessibility.setText(text);
+            if (done == null) {
+                reply(s, 409, "text/plain", "Turn on ARC remote control under Settings > Accessibility > Services "
+                        + "to type into text boxes.");
+            } else {
+                reply(s, 200, "text/plain", done);
             }
         }
     }
@@ -459,35 +452,42 @@ final class LinkServer {
     private void atvYoutube(Socket s, String query) throws IOException {
         if (query.isEmpty()) {
             reply(s, 400, "text/plain", "Nothing to search for.");
-        } else if (!AtvRemote.paired(app)) {
-            reply(s, 409, "text/plain", "Pair ARC with this TV's remote first.");
         } else {
-            try {
-                AtvRemote.youtubeSearch(app, query);
-                reply(s, 200, "text/plain", "Searching YouTube on the TV.");
-            } catch (IOException e) {
-                reply(s, 409, "text/plain", e.getMessage());
-            }
+            searchYoutube(s, query);
         }
     }
 
-    /** What the phone's REMOTE screen shows: whether the module works here, is paired, the front app, the volume. */
-    private void atvState(Socket s) throws IOException {
-        boolean module = AtvRemote.available(app);
-        boolean paired = module && AtvRemote.paired(app);
-        if (paired) {
-            try {
-                AtvRemote.connect(app);
-            } catch (IOException e) {
-                paired = AtvRemote.paired(app);
-            }
+    /** Opens YouTube's results by starting the YouTube TV app with a link; spaces must be %20 (a "+" is literal). */
+    private void searchYoutube(Socket s, String query) throws IOException {
+        String q = java.net.URLEncoder.encode(query, "UTF-8").replace("+", "%20");
+        Intent open = new Intent(Intent.ACTION_VIEW,
+                android.net.Uri.parse("https://www.youtube.com/results?search_query=" + q));
+        open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (app.getPackageManager().getLaunchIntentForPackage(YOUTUBE) != null) {
+            open.setPackage(YOUTUBE);
         }
-        String front = AtvRemote.foreground();
-        reply(s, 200, "text/plain", "module=" + (module ? 1 : 0) + "\npaired=" + (paired ? 1 : 0)
+        try {
+            app.startActivity(open);
+            reply(s, 200, "text/plain", "Searching YouTube on the TV.");
+        } catch (android.content.ActivityNotFoundException e) {
+            reply(s, 404, "text/plain", "YouTube is not installed on this TV.");
+        }
+    }
+
+    /** What the phone's REMOTE screen shows: whether real keys are possible and enabled, the front app, the volume. */
+    private void atvState(Socket s) throws IOException {
+        boolean module = AdbClient.available();
+        AudioManager am = (AudioManager) app.getSystemService(Context.AUDIO_SERVICE);
+        int max = Math.max(1, am.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
+        int cur = am.getStreamVolume(AudioManager.STREAM_MUSIC);
+        String front = ArcAccessibility.foreground();
+        reply(s, 200, "text/plain", "module=" + (module ? 1 : 0)
+                + "\npaired=" + (AdbClient.authorized(app) ? 1 : 0)
+                + "\nwaiting=" + (AdbClient.state() == AdbClient.WAITING ? 1 : 0)
                 + "\nforeground=" + (front == null ? "" : front)
-                + "\nvolume=" + AtvRemote.volumeLevel() + "/" + AtvRemote.volumeMax()
-                + "\nmuted=" + (AtvRemote.volumeMuted() ? 1 : 0)
-                + "\nerror=" + AtvRemote.lastError() + "\n");
+                + "\nvolume=" + cur + "/" + max
+                + "\nmuted=" + (am.isStreamMute(AudioManager.STREAM_MUSIC) ? 1 : 0)
+                + "\nerror=" + AdbClient.lastError() + "\n");
     }
 
     private static String form(String body, String key) {
@@ -784,13 +784,13 @@ final class LinkServer {
      * n = presses for forward and rewind, percent for the volume.
      */
     private void key(Socket s, String k, int n) throws IOException {
-        // real key presses for every app through Google's own remote service, once ARC has paired with it
-        int atvCode = AtvRemote.keycode(k);
-        if (atvCode != 0 && AtvRemote.paired(app)) {
+        // real key presses for every app through the TV's own adb, once the user has tapped ALLOW for ARC's key
+        int adbCode = AdbClient.keycode(k);
+        if (adbCode != 0 && AdbClient.authorized(app)) {
             try {
                 int times = k.startsWith("nav") || k.startsWith("scroll") ? Math.max(1, Math.min(20, n)) : 1;
                 for (int i = 0; i < times; i++) {
-                    AtvRemote.key(app, atvCode);
+                    AdbClient.key(app, adbCode);
                     if (i < times - 1) {
                         Thread.sleep(150);
                     }

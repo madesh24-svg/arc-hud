@@ -3,6 +3,7 @@ package io.archud;
 import android.accessibilityservice.AccessibilityService;
 import android.content.Context;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.PowerManager;
 import android.view.View;
 import android.view.accessibility.AccessibilityEvent;
@@ -26,6 +27,21 @@ public class ArcAccessibility extends AccessibilityService {
     private static final String DONE = "Done.";
 
     private static volatile ArcAccessibility instance;
+    /** The app in front, from window-change events (the keyboard and system bars are ignored); null if unknown. */
+    private static volatile String foreground;
+
+    static String foreground() {
+        return foreground;
+    }
+
+    /**
+     * Sets the text of the focused (or first) text box on screen, replacing what is there. Null when the service is
+     * off. Works in ordinary Android text boxes; apps that draw their own keyboard (YouTube) take links instead.
+     */
+    static String setText(String value) {
+        ArcAccessibility a = instance;
+        return a == null ? null : a.doSetText(value);
+    }
 
     /** True when k is one of the controls this service runs. */
     static boolean handles(String k) {
@@ -82,7 +98,51 @@ public class ArcAccessibility extends AccessibilityService {
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        // nothing to react to: this service only acts when the phone asks
+        // only the name of the window that came to the front is used; no screen text is read
+        if (event.getEventType() == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED && event.getPackageName() != null) {
+            String p = event.getPackageName().toString();
+            if (!p.equals("com.android.systemui") && !p.startsWith("com.google.android.inputmethod")
+                    && !p.equals("com.google.android.packageinstaller")) {
+                foreground = p;
+            }
+        }
+    }
+
+    private String doSetText(String value) {
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null) {
+            return "Nothing on the screen to type into.";
+        }
+        AccessibilityNodeInfo box = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT);
+        if (box == null || !box.isEditable()) {
+            box = firstEditable(root);
+        }
+        if (box == null) {
+            return "No text box is selected on the TV.";
+        }
+        Bundle args = new Bundle();
+        args.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, value);
+        return box.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                ? "Typed on the TV." : "The text box did not accept the text.";
+    }
+
+    private static AccessibilityNodeInfo firstEditable(AccessibilityNodeInfo root) {
+        ArrayDeque<AccessibilityNodeInfo> queue = new ArrayDeque<>();
+        queue.add(root);
+        int seen = 0;
+        while (!queue.isEmpty() && seen++ < 600) {
+            AccessibilityNodeInfo n = queue.poll();
+            if (n.isEditable() && n.isVisibleToUser()) {
+                return n;
+            }
+            for (int i = 0; i < n.getChildCount(); i++) {
+                AccessibilityNodeInfo c = n.getChild(i);
+                if (c != null) {
+                    queue.add(c);
+                }
+            }
+        }
+        return null;
     }
 
     @Override

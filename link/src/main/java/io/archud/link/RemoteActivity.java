@@ -1,6 +1,5 @@
 package io.archud.link;
 
-import android.app.AlertDialog;
 import android.content.Context;
 import android.os.Bundle;
 import android.os.Handler;
@@ -83,7 +82,7 @@ public class RemoteActivity extends JarvisActivity {
         col.addView(row(Hud.button(this, "TYPE ON THE TV", Hud.SOLID, true, this::sendText),
                 Hud.button(this, "SEARCH YOUTUBE", Hud.SOLID, true, this::searchYoutube)), Hud.stack(this));
 
-        pairButton = Hud.button(this, "PAIR ARC WITH THE TV REMOTE (ONCE)", Hud.GOLDEN, false, this::pair);
+        pairButton = Hud.button(this, "ENABLE REAL KEYS (ONE TAP ON THE TV)", Hud.GOLDEN, false, this::enable);
         col.addView(pairButton, Hud.stack(this));
 
         info = Hud.label(this, "", 11, Hud.CYAN, false);
@@ -156,7 +155,7 @@ public class RemoteActivity extends JarvisActivity {
         boolean module = !"0".equals(value(text, "module"));
         boolean paired = "1".equals(value(text, "paired"));
         pairButton.setVisibility(module ? View.VISIBLE : View.GONE);
-        pairButton.setText(paired ? "TV REMOTE READY (TAP TO PAIR AGAIN)" : "PAIR ARC WITH THE TV REMOTE (ONCE)");
+        pairButton.setText(paired ? "REAL KEYS ARE ON (TAP TO CHECK AGAIN)" : "ENABLE REAL KEYS (ONE TAP ON THE TV)");
         StringBuilder sb = new StringBuilder();
         String vol = value(text, "volume");
         if (vol.matches("\\d+/\\d+") && !vol.startsWith("0/")) {
@@ -167,12 +166,14 @@ public class RemoteActivity extends JarvisActivity {
         }
         String error = value(text, "error");
         if (paired && !error.isEmpty()) {
-            sb.append(sb.length() > 0 ? "  " : "").append("Remote service: ").append(error);
+            sb.append(sb.length() > 0 ? "  " : "").append("adb: ").append(error);
         }
         if (!module) {
-            sb.append("This TV has no Google remote service, so the keys use ARC remote control.");
+            sb.append("This TV does not offer network adb, so the keys use ARC remote control.");
+        } else if ("1".equals(value(text, "waiting"))) {
+            sb.append(sb.length() > 0 ? "  " : "").append("On the TV: tick Always allow and tap ALLOW.");
         } else if (!paired) {
-            sb.append(sb.length() > 0 ? "  " : "").append("Pair once from any phone so the keys work in every app.");
+            sb.append(sb.length() > 0 ? "  " : "").append("Tap the gold button once so the keys work in every app, YouTube included.");
         }
         info.setText(sb.toString());
     }
@@ -219,7 +220,7 @@ public class RemoteActivity extends JarvisActivity {
             final boolean sent = ok;
             runOnUiThread(() -> {
                 status.setText(shown);
-                if (sent && !path.equals("/key")) {
+                if (sent && (path.equals("/type") || path.equals("/ytsearch"))) {
                     textField.setText("");
                 }
             });
@@ -254,47 +255,15 @@ public class RemoteActivity extends JarvisActivity {
         send("/ytsearch", "q=" + enc(value));
     }
 
-    // ------------------------------------------------------------------ one-time pairing of ARC with the TV
+    // ------------------------------------------------------------------ one-time enabling of real keys
 
-    private void pair() {
+    /** Asks ARC on the TV to start the one-time authorization; the TV then shows an ALLOW dialog to tap. */
+    private void enable() {
         if (!Store.paired(this)) {
             status.setText("Pair with the TV first: go back and open the cog on the home screen.");
             return;
         }
-        final Context app = getApplicationContext();
-        final String host = Store.host(app);
-        final String pin = Store.pin(app);
-        status.setText("Starting pairing. A 6-character code will appear on the TV.");
-        new Thread(() -> {
-            try {
-                TvClient.Reply r = TvClient.post(host, "/atvpair", pin, "");
-                final boolean ok = r.ok();
-                final String text = r.text;
-                runOnUiThread(() -> {
-                    if (ok) {
-                        askCode();
-                    } else {
-                        status.setText(text);
-                    }
-                });
-            } catch (IOException e) {
-                final String m = e.getMessage();
-                runOnUiThread(() -> status.setText("Could not reach the TV: " + m));
-            }
-        }, "arclink-pair").start();
-    }
-
-    private void askCode() {
-        final EditText code = new EditText(this);
-        code.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
-        code.setHint("6-character code");
-        new AlertDialog.Builder(this)
-                .setTitle("PAIR ARC WITH THE TV REMOTE")
-                .setMessage("Type the code the TV is showing. You only do this once for the whole family.")
-                .setView(code)
-                .setPositiveButton("PAIR", (d, w) -> send("/atvcode", "code=" + enc(code.getText().toString())))
-                .setNegativeButton("CANCEL", null)
-                .show();
+        send("/adbenable", "");
     }
 
     private int dp(float v) {
