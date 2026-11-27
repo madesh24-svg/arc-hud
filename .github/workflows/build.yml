@@ -34,7 +34,25 @@ jobs:
           ARCHUD_KEYSTORE: ${{ runner.temp }}/archud.p12
           ARCHUD_KEYSTORE_PASSWORD: ${{ secrets.ARCHUD_KEYSTORE_PASSWORD }}
           ARC_HEARTBEAT_TOKEN: ${{ secrets.ARC_HEARTBEAT_TOKEN }}
-        run: gradle assembleRelease --no-daemon --stacktrace
+        # Maven Central sometimes answers 429 Too Many Requests to shared CI runners. Retry only when the
+        # failure is a download problem (what is already downloaded is kept between tries); a real compile
+        # error fails at once with its normal message.
+        run: |
+          for attempt in 1 2 3; do
+            set +e
+            gradle assembleRelease --no-daemon --stacktrace 2>&1 | tee build.log
+            code=${PIPESTATUS[0]}
+            set -e
+            if [ "$code" -eq 0 ]; then
+              exit 0
+            fi
+            if ! grep -q -E "Too Many Requests|Could not GET|Could not resolve|Connection reset|Read timed out" build.log; then
+              exit "$code"
+            fi
+            echo "Download problem on attempt $attempt, retrying after a pause"
+            sleep $((attempt * 45))
+          done
+          exit 1
       - name: Rename
         run: |
           cp app/build/outputs/apk/release/app-release.apk arc-hud.apk
