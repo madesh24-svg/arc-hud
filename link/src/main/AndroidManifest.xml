@@ -115,6 +115,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <!-- Listens for the paired TV's announcements so the phone knows if it is on, in standby or offline. -->
+        <service
+            android:name=".WatchService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <receiver
             android:name=".InstallReceiver"
             android:exported="false" />

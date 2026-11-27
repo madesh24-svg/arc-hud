@@ -164,6 +164,7 @@ public class MainActivity extends JarvisActivity {
 
     private void refreshStatus() {
         if (Store.paired(this)) {
+            WatchService.start(this);
             status.set("PAIRED WITH THE TV AT " + Store.host(this), Hud.OK);
         } else {
             status.set("NOT PAIRED YET. TAP THE COG TO PAIR.", Hud.GOLD);

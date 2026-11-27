@@ -489,6 +489,7 @@ final class LinkServer {
                 + "\ntvid=" + Announcer.id(app)
                 + "\ntvname=" + Announcer.name(app)
                 + "\ntvmac=" + Announcer.mac()
+                + "\nscreen=" + Announcer.screen(app)
                 + "\nforeground=" + (front == null ? "" : front)
                 + "\nvolume=" + cur + "/" + max
                 + "\nmuted=" + (am.isStreamMute(AudioManager.STREAM_MUSIC) ? 1 : 0)

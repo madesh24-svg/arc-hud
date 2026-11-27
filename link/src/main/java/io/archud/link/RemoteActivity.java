@@ -25,6 +25,7 @@ public class RemoteActivity extends JarvisActivity {
 
     private float density;
     private TextView status;
+    private TextView tvLine;
     private TextView info;
     private TextView pairButton;
     private EditText textField;
@@ -68,6 +69,10 @@ public class RemoteActivity extends JarvisActivity {
         col.addView(brand);
         col.addView(Hud.rule(this));
 
+        tvLine = Hud.label(this, "", 13, Hud.DIM, true);
+        tvLine.setPadding(0, dp(8), 0, dp(8));
+        col.addView(tvLine);
+
         col.addView(row(key("HOME", "home"), key("BACK", "back"), key("RECENT", "recents")), Hud.stack(this));
         col.addView(row(spacer(), key("UP", "navup"), spacer()), Hud.stack(this));
         col.addView(row(key("LEFT", "navleft"), key("OK", "ok"), key("RIGHT", "navright")), Hud.stack(this));
@@ -96,8 +101,39 @@ public class RemoteActivity extends JarvisActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        WatchService.start(this);
         polling = true;
         handler.post(pollTask);
+    }
+
+    /** Shows whether the paired TV is ON, in STANDBY (tap SCREEN ON to wake it) or OFFLINE, from its announcements. */
+    private void showTv() {
+        if (!Store.paired(this)) {
+            tvLine.setText("");
+            return;
+        }
+        String[] s = Finder.status(this);
+        if (s == null) {
+            tvLine.setTextColor(Hud.DIM);
+            tvLine.setText("LOOKING FOR YOUR TV...");
+            return;
+        }
+        String name = s[0].isEmpty() ? "TV" : s[0];
+        switch (s[1]) {
+            case "ON":
+                tvLine.setTextColor(Hud.OK);
+                tvLine.setText(name + "  ON");
+                break;
+            case "STANDBY":
+                tvLine.setTextColor(Hud.GOLD);
+                tvLine.setText(name + "  STANDBY - TAP SCREEN ON TO WAKE IT");
+                break;
+            default:
+                tvLine.setTextColor(Hud.WARN);
+                tvLine.setText(name + "  OFFLINE"
+                        + ("-1".equals(s[2]) ? "" : " - LAST HEARD " + s[2] + " S AGO"));
+                break;
+        }
     }
 
     @Override
@@ -113,6 +149,7 @@ public class RemoteActivity extends JarvisActivity {
             if (!polling) {
                 return;
             }
+            showTv();
             fetchState();
             handler.postDelayed(this, POLL_MS);
         }

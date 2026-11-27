@@ -3,6 +3,7 @@ package io.archud;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Build;
+import android.os.PowerManager;
 
 import java.io.IOException;
 import java.net.DatagramPacket;
@@ -19,7 +20,7 @@ import java.util.Locale;
 /**
  * ARC ANNOUNCE: while ARC LINK is on, this TV tells the home network who it is every few seconds, so phones find it
  * again by its permanent ID however often the router changes its address. One small UDP broadcast on port 8766:
- * ARCLINK1|id|name|ip|port|mac. It never carries the PIN or anything else private, and goes to the local network only.
+ * ARCLINK1|id|name|ip|port|mac|screen (screen = on or standby). It never carries the PIN or anything else private, and goes to the local network only.
  */
 final class Announcer {
     static final int PORT = 8766;
@@ -77,6 +78,12 @@ final class Announcer {
             n = Build.MODEL == null ? "TV" : Build.MODEL;
         }
         return clean(n);
+    }
+
+    /** "on" while the screen is on, "standby" while it is off but the TV is still reachable. */
+    static String screen(Context c) {
+        PowerManager pm = (PowerManager) c.getSystemService(Context.POWER_SERVICE);
+        return pm != null && !pm.isInteractive() ? "standby" : "on";
     }
 
     /** The Wi-Fi (or wired) hardware address, lower case with colons, or an empty string if Android hides it. */
@@ -158,6 +165,7 @@ final class Announcer {
         String id = id(app);
         String name = name(app);
         String mac = mac();
+        String screen = screen(app);
         Enumeration<NetworkInterface> ifs = NetworkInterface.getNetworkInterfaces();
         while (ifs != null && ifs.hasMoreElements()) {
             NetworkInterface ni = ifs.nextElement();
@@ -170,7 +178,7 @@ final class Announcer {
                     continue;
                 }
                 String msg = "ARCLINK1|" + id + "|" + name + "|" + a.getHostAddress() + "|" + LinkServer.PORT
-                        + "|" + mac;
+                        + "|" + mac + "|" + screen;
                 byte[] data = msg.getBytes(StandardCharsets.UTF_8);
                 InetAddress directed = ia.getBroadcast();
                 try {

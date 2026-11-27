@@ -78,10 +78,31 @@ final class Finder {
         if (id.length() != 16 || !ip.equals(from.getHostAddress()) || !TvClient.isLocalIp(ip)) {
             return;
         }
-        SEEN.put(id, new String[] {ip, String.valueOf(System.currentTimeMillis())});
+        String screen = f.length >= 7 && "standby".equals(f[6]) ? "standby" : "on";
+        SEEN.put(id, new String[] {ip, String.valueOf(System.currentTimeMillis()), screen, f[2]});
         if (app != null) {
             Store.onAnnounce(app, id, f[2], ip, f[5]);
         }
+    }
+
+    /**
+     * How the paired TV looks right now, from its latest announcement: {name, state, secondsSinceHeard} where state
+     * is ON, STANDBY (screen off, still reachable) or OFFLINE (not heard for 15 seconds). Null when this phone is
+     * not paired or has not learned the TV's ID yet.
+     */
+    static String[] status(Context c) {
+        String id = Store.tvId(c);
+        if (id.isEmpty()) {
+            return null;
+        }
+        String name = Store.tvName(c);
+        String[] e = SEEN.get(id);
+        if (e == null) {
+            return new String[] {name, "OFFLINE", "-1"};
+        }
+        long age = (System.currentTimeMillis() - Long.parseLong(e[1])) / 1000;
+        String state = age > 15 ? "OFFLINE" : "standby".equals(e[2]) ? "STANDBY" : "ON";
+        return new String[] {e[3].isEmpty() ? name : e[3], state, String.valueOf(age)};
     }
 
     /**
