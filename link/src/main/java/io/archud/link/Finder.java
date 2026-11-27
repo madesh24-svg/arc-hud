@@ -82,6 +82,60 @@ final class Finder {
         SEEN.put(id, new String[] {ip, String.valueOf(System.currentTimeMillis()), screen, f[2]});
         if (app != null) {
             Store.onAnnounce(app, id, f[2], ip, f[5]);
+            adoptIfStale(id, f[2], ip, f[5]);
+        }
+    }
+
+    /** TVs this phone is already checking or has tried twice with its saved PIN. */
+    private static final ConcurrentHashMap<String, Integer> TRIES = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<String, Boolean> BUSY = new ConcurrentHashMap<>();
+
+    /**
+     * A phone paired before announcements existed knows only an address and a PIN, so it never learned the TV's ID.
+     * If that saved address no longer answers, try the saved PIN on the announcing TV: if it accepts it, that is
+     * the paired TV and the phone adopts its ID and new address. At most two tries per TV, so another TV with a
+     * different PIN is never locked out.
+     */
+    private static void adoptIfStale(final String id, final String name, final String ip, final String mac) {
+        final Context c = app;
+        if (c == null || !Store.paired(c) || !Store.tvId(c).isEmpty()) {
+            return;
+        }
+        final String host = Store.host(c);
+        if (host.equals(ip) || BUSY.putIfAbsent(id, Boolean.TRUE) != null) {
+            return;
+        }
+        Thread t = new Thread(() -> {
+            try {
+                if (answers(host)) {
+                    return;
+                }
+                Integer n = TRIES.get(id);
+                if (n != null && n >= 2) {
+                    return;
+                }
+                TRIES.put(id, n == null ? 1 : n + 1);
+                TvClient.Reply r = TvClient.post(ip, "/state", Store.pin(c), "");
+                if (r.ok()) {
+                    Store.adopt(c, id, name, ip, mac);
+                }
+            } catch (IOException ignored) {
+                // that TV did not answer; the next announcement tries again within the limit
+            } finally {
+                BUSY.remove(id);
+            }
+        }, "arclink-adopt");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** True if something answers on the saved address (so the saved address is not stale). */
+    private static boolean answers(String host) {
+        try (java.net.Socket s = new java.net.Socket()) {
+            s.connect(new InetSocketAddress(host, TvClient.PORT), 1000);
+            return true;
+        } catch (IOException e) {
+            return false;
         }
     }
 

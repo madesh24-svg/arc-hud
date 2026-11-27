@@ -35,6 +35,12 @@ final class Store {
         return prefs(c).getString("tv_name", "");
     }
 
+    /** Makes this announcing TV the paired one (its PIN was just accepted at that address). */
+    static synchronized void adopt(Context c, String id, String name, String ip, String mac) {
+        prefs(c).edit().putString(HOST, ip).putString("tv_id", id).putString("tv_name", name)
+                .putString("tv_mac", mac).apply();
+    }
+
     /**
      * An announcement from a TV on the network. If this phone has no TV ID yet and the announcement comes from the
      * address it is paired with, that TV's ID is adopted; if the ID matches the paired TV, the stored address
