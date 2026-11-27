@@ -40,6 +40,34 @@ final class TvClient {
     private TvClient() {
     }
 
+    /**
+     * Connects to the TV; if the saved address does not answer, waits a few seconds for the TV's own announcement
+     * (see Finder) and tries the address it now has. The Finder also saves that address for next time.
+     */
+    private static Socket connectTo(String host) throws IOException {
+        IOException first;
+        Socket s = new Socket();
+        try {
+            s.connect(new InetSocketAddress(host, PORT), 3000);
+            return s;
+        } catch (IOException e) {
+            first = e;
+            s.close();
+        }
+        String moved = Finder.waitFor(host, 4000);
+        if (moved == null || !isLocalIp(moved)) {
+            throw first;
+        }
+        Socket s2 = new Socket();
+        try {
+            s2.connect(new InetSocketAddress(moved, PORT), 3000);
+            return s2;
+        } catch (IOException e) {
+            s2.close();
+            throw e;
+        }
+    }
+
     /** True for a dotted IPv4 address that is private (home network). */
     static boolean isLocalIp(String host) {
         if (host == null || !host.matches("\\d{1,3}(\\.\\d{1,3}){3}")) {
@@ -57,8 +85,7 @@ final class TvClient {
         if (!isLocalIp(host)) {
             throw new IOException("The TV address must be a home-network address like 192.168.0.20");
         }
-        try (Socket s = new Socket()) {
-            s.connect(new InetSocketAddress(host, PORT), 3000);
+        try (Socket s = connectTo(host)) {
             s.setSoTimeout(15000);
             byte[] payload = body.getBytes(StandardCharsets.UTF_8);
             String head = "POST " + path + " HTTP/1.1\r\nHost: " + host + ":" + PORT
@@ -83,8 +110,7 @@ final class TvClient {
         if (!isLocalIp(host)) {
             throw new IOException("The TV address must be a home-network address like 192.168.0.20");
         }
-        try (Socket s = new Socket()) {
-            s.connect(new InetSocketAddress(host, PORT), 3000);
+        try (Socket s = connectTo(host)) {
             s.setSoTimeout(20000);
             StringBuilder head = new StringBuilder("POST ").append(path).append(" HTTP/1.1\r\nHost: ")
                     .append(host).append(':').append(PORT).append("\r\nX-Pin: ").append(pin);
@@ -110,8 +136,7 @@ final class TvClient {
         if (!isLocalIp(host)) {
             throw new IOException("The TV address must be a home-network address like 192.168.0.20");
         }
-        try (Socket s = new Socket()) {
-            s.connect(new InetSocketAddress(host, PORT), 3000);
+        try (Socket s = connectTo(host)) {
             s.setSoTimeout(30000);
             StringBuilder head = new StringBuilder("POST ").append(path).append(" HTTP/1.1\r\nHost: ")
                     .append(host).append(':').append(PORT).append("\r\nX-Pin: ").append(pin);

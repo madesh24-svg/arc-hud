@@ -108,12 +108,14 @@ final class LinkServer {
                 Thread t = new Thread(instance::acceptLoop, "arclink-accept");
                 t.setDaemon(true);
                 t.start();
+                Announcer.start(app);
             } catch (IOException e) {
                 instance = null;
             }
         } else if (!wanted && instance != null) {
             instance.close();
             instance = null;
+            Announcer.stop();
         }
     }
 
@@ -484,6 +486,9 @@ final class LinkServer {
         reply(s, 200, "text/plain", "module=" + (module ? 1 : 0)
                 + "\npaired=" + (AdbClient.authorized(app) ? 1 : 0)
                 + "\nwaiting=" + (AdbClient.state() == AdbClient.WAITING ? 1 : 0)
+                + "\ntvid=" + Announcer.id(app)
+                + "\ntvname=" + Announcer.name(app)
+                + "\ntvmac=" + Announcer.mac()
                 + "\nforeground=" + (front == null ? "" : front)
                 + "\nvolume=" + cur + "/" + max
                 + "\nmuted=" + (am.isStreamMute(AudioManager.STREAM_MUSIC) ? 1 : 0)

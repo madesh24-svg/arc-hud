@@ -17,7 +17,52 @@ final class Store {
     }
 
     static String host(Context c) {
+        Finder.ensure(c);
         return prefs(c).getString(HOST, "");
+    }
+
+    /** The paired TV's permanent ID (learned from its announcements), or an empty string if not known yet. */
+    static String tvId(Context c) {
+        return prefs(c).getString("tv_id", "");
+    }
+
+    /** The paired TV's hardware address, kept for waking it later; empty if the TV did not report one. */
+    static String tvMac(Context c) {
+        return prefs(c).getString("tv_mac", "");
+    }
+
+    static String tvName(Context c) {
+        return prefs(c).getString("tv_name", "");
+    }
+
+    /**
+     * An announcement from a TV on the network. If this phone has no TV ID yet and the announcement comes from the
+     * address it is paired with, that TV's ID is adopted; if the ID matches the paired TV, the stored address
+     * follows it to wherever the router put it.
+     */
+    static synchronized void onAnnounce(Context c, String id, String name, String ip, String mac) {
+        SharedPreferences p = prefs(c);
+        String host = p.getString(HOST, "");
+        if (host.isEmpty()) {
+            return;
+        }
+        String mine = p.getString("tv_id", "");
+        if (mine.isEmpty()) {
+            if (!host.equals(ip)) {
+                return;
+            }
+            p.edit().putString("tv_id", id).putString("tv_name", name).putString("tv_mac", mac).apply();
+        } else if (mine.equals(id)) {
+            SharedPreferences.Editor e = p.edit();
+            if (!host.equals(ip)) {
+                e.putString(HOST, ip);
+            }
+            e.putString("tv_name", name);
+            if (!mac.isEmpty()) {
+                e.putString("tv_mac", mac);
+            }
+            e.apply();
+        }
     }
 
     static String pin(Context c) {
@@ -25,7 +70,13 @@ final class Store {
     }
 
     static void save(Context c, String host, String pin) {
-        prefs(c).edit().putString(HOST, host).putString(PIN, pin).apply();
+        boolean sameTv = host.equals(prefs(c).getString(HOST, ""));
+        SharedPreferences.Editor e = prefs(c).edit().putString(HOST, host).putString(PIN, pin);
+        if (!sameTv) {
+            // a different TV: forget the old one's ID until its own announcement is heard
+            e.remove("tv_id").remove("tv_name").remove("tv_mac");
+        }
+        e.apply();
     }
 
     static boolean paired(Context c) {
